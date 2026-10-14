@@ -23,7 +23,7 @@ mod framebuffer;
 mod session;
 mod tls;
 
-pub use config::{Credentials, Security, SessionConfig};
+pub use config::{AddressError, Credentials, Security, SessionConfig, parse_address};
 pub use event::{
     AuthFailure, CertificateInfo, CertificateProblem, CertificatePrompt, DecodedPointer, DisconnectReason,
     PointerEvent, SessionEvent,

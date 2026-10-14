@@ -6,9 +6,20 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[[bin]]
+name = "rdesk"
+path = "src/main.rs"
+
 [dependencies]
-gtk4.workspace = true
+rdesk-core.workspace = true
+rdesk-input.workspace = true
+# v4_16: incremental texture updates (GdkMemoryTextureBuilder update region).
+gtk4 = { workspace = true, features = ["v4_16"] }
 libadwaita.workspace = true
+tokio.workspace = true
+async-channel.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true

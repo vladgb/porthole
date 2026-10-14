@@ -77,7 +77,7 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
         Ok(p) => p,
         Err(_) => rpassword::prompt_password(format!("Password for {}: ", args.username))?,
     };
-    let (host, port) = split_host_port(&args.host)?;
+    let (host, port) = rdesk_core::parse_address(&args.host)?;
     let mut config = SessionConfig::new(host, Credentials::parse(&args.username, password));
     config.port = port;
     config.desktop_width = args.width;
@@ -182,21 +182,4 @@ fn same_fingerprint(a: &str, b: &str) -> bool {
             .to_ascii_uppercase()
     };
     normalize(a) == normalize(b)
-}
-
-fn split_host_port(input: &str) -> anyhow::Result<(String, u16)> {
-    // Bracketed IPv6 with port: [::1]:3389
-    if let Some(rest) = input.strip_prefix('[') {
-        let (host, after) = rest.split_once(']').context("missing ']' in IPv6 address")?;
-        let port = match after.strip_prefix(':') {
-            Some(p) => p.parse().context("invalid port")?,
-            None => 3389,
-        };
-        return Ok((host.to_owned(), port));
-    }
-    match input.rsplit_once(':') {
-        // A bare IPv6 address has several colons and no port.
-        Some((host, port)) if !host.contains(':') => Ok((host.to_owned(), port.parse().context("invalid port")?)),
-        _ => Ok((input.to_owned(), 3389)),
-    }
 }
