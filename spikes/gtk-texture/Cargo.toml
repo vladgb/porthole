@@ -1,0 +1,16 @@
+[package]
+name = "gtk-texture"
+description = "Phase 0 spike: present a 1080p framebuffer updated from another thread at 60 fps in GTK4"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+# Incremental texture updates (update_texture/update_region) need GTK 4.16.
+gtk4 = { workspace = true, features = ["v4_16"] }
+clap.workspace = true
+
+[lints]
+workspace = true

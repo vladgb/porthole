@@ -8,13 +8,16 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
+    # GTK >= 4.16 is needed (incremental texture updates); Ubuntu 24.04 runners ship 4.14.
+    container: ubuntu:26.04
     steps:
-      - uses: actions/checkout@v4
       - name: System dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev libadwaita-1-dev pkg-config clang
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git build-essential \
+            pkg-config clang libgtk-4-dev libadwaita-1-dev
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

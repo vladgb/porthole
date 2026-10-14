@@ -364,7 +364,7 @@ Rough sizing assumes one experienced Rust developer; parallelize where possible.
 
 ## 8. Immediate next steps
 
-Status 2026-10-14: steps 1–4 done; spike verified against xrdp and Windows 11 Pro with NLA (see `docs/phase0-ironrdp-spike.md`). Next: GTK4 60 fps texture spike.
+Status 2026-10-14: steps 1–4 done; spike verified against xrdp and Windows 11 Pro with NLA (see `docs/phase0-ironrdp-spike.md`). GTK4 texture spike done (see `docs/phase0-gtk-texture-spike.md`): memory textures hold 60 fps at 1080p; 4K needs the Phase 2 GL/dmabuf path.
 
 1. Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
 2. Install system deps (Ubuntu): `sudo apt install libgtk-4-dev libadwaita-1-dev libpipewire-0.3-dev libpcsclite-dev pkg-config clang`.

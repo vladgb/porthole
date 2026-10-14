@@ -1285,6 +1285,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gtk-texture"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "gtk4",
+]
+
+[[package]]
 name = "gtk4"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

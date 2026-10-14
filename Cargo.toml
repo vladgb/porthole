@@ -11,8 +11,9 @@ members = [
     "app",
     "cli",
     "spikes/rdp-screenshot",
+    "spikes/gtk-texture",
 ]
-# `app` needs GTK4/libadwaita system libraries; everything else builds with only a Rust toolchain.
+# `app` and `spikes/gtk-texture` need GTK4/libadwaita system libraries; everything else builds with only a Rust toolchain.
 default-members = [
     "crates/rdesk-core",
     "crates/rdesk-gfx",

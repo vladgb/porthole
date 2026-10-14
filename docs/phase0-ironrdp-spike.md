@@ -78,5 +78,5 @@ only if NLA against Windows fails in ways we can't fix upstream.
 ## Still open in Phase 0
 
 - [x] NLA (NTLM) + screenshot against Windows 11 Pro (2026-10-14). Server 2022 still to do (Phase 4 gateway).
-- [ ] GTK4 60 fps texture spike (blocked on `libgtk-4-dev libadwaita-1-dev` being installed).
+- [x] GTK4 60 fps texture spike — see `phase0-gtk-texture-spike.md`.
 - [ ] Reproduce the login-screen shear in isolation; file upstream issue.
