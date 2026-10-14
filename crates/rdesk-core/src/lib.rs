@@ -1,1 +1,38 @@
 //! Session engine: connect, run loop, and events. UI-agnostic.
+//!
+//! ```no_run
+//! # async fn demo(runtime: tokio::runtime::Handle) {
+//! use rdesk_core::{Credentials, SessionConfig, SessionEvent};
+//!
+//! let config = SessionConfig::new("pc.example", Credentials::parse(r"CONTOSO\alice", "secret"));
+//! let (session, events) = rdesk_core::connect(config, &runtime);
+//! while let Ok(event) = events.recv().await {
+//!     match event {
+//!         SessionEvent::CertificatePrompt(prompt) => prompt.reject(),
+//!         SessionEvent::FrameReady => session.framebuffer().take_damage(|_damage| { /* upload */ }),
+//!         SessionEvent::Disconnected(reason) => println!("{reason}"),
+//!         _ => {}
+//!     }
+//! }
+//! # }
+//! ```
+
+mod config;
+mod event;
+mod framebuffer;
+mod session;
+mod tls;
+
+pub use config::{Credentials, Security, SessionConfig};
+pub use event::{
+    AuthFailure, CertificateInfo, CertificateProblem, CertificatePrompt, DecodedPointer, DisconnectReason,
+    PointerEvent, SessionEvent,
+};
+pub use framebuffer::{Damage, Framebuffer, Rect};
+pub use session::{SessionHandle, connect};
+pub use tls::fingerprint;
+
+/// Input types accepted by [`SessionHandle::send_input`].
+pub mod input {
+    pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
+}

@@ -7,6 +7,20 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ironrdp.workspace = true
+ironrdp-tokio.workspace = true
+sspi.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+rustls-native-certs.workspace = true
+x509-cert.workspace = true
+sha2.workspace = true
+async-channel.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]
 workspace = true
