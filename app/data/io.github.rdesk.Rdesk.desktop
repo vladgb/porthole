@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Remote Desktop
+Comment=Connect to Windows PCs and virtual desktops
+Exec=rdesk %U
+Icon=io.github.rdesk.Rdesk
+Terminal=false
+Type=Application
+Categories=Network;RemoteAccess;GTK;
+MimeType=application/x-rdp;x-scheme-handler/rdp;x-scheme-handler/ms-rd;
+StartupNotify=true

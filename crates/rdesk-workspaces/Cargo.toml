@@ -1,0 +1,12 @@
+[package]
+name = "rdesk-workspaces"
+description = "AVD / Windows 365 / RD Web feed discovery and Entra ID auth."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,14 @@
+[package]
+name = "rdesk"
+description = "Native Linux Remote Desktop client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+gtk4.workspace = true
+libadwaita.workspace = true
+
+[lints]
+workspace = true

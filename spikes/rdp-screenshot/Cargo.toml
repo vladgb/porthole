@@ -1,0 +1,25 @@
+[package]
+name = "rdp-screenshot"
+description = "Phase 0 spike: connect with IronRDP (NLA), capture the desktop, save it as PNG"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ironrdp.workspace = true
+ironrdp-blocking.workspace = true
+sspi.workspace = true
+tokio-rustls.workspace = true
+x509-cert.workspace = true
+sha2.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+image.workspace = true
+rpassword.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

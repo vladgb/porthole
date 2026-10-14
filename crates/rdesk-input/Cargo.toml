@@ -1,0 +1,12 @@
+[package]
+name = "rdesk-input"
+description = "Keyboard scancode tables, layouts, and mouse/scroll mapping."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

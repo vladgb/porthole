@@ -1,0 +1,12 @@
+[package]
+name = "rdesk-store"
+description = "Profiles, groups, accounts, gateways, .rdp parsing, and keyring access."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

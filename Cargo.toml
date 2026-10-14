@@ -1,0 +1,80 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/rdesk-core",
+    "crates/rdesk-gfx",
+    "crates/rdesk-input",
+    "crates/rdesk-channels",
+    "crates/rdesk-store",
+    "crates/rdesk-workspaces",
+    "crates/rdesk-gateway",
+    "app",
+    "cli",
+    "spikes/rdp-screenshot",
+]
+# `app` needs GTK4/libadwaita system libraries; everything else builds with only a Rust toolchain.
+default-members = [
+    "crates/rdesk-core",
+    "crates/rdesk-gfx",
+    "crates/rdesk-input",
+    "crates/rdesk-channels",
+    "crates/rdesk-store",
+    "crates/rdesk-workspaces",
+    "crates/rdesk-gateway",
+    "cli",
+    "spikes/rdp-screenshot",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OWNER/rdesk"
+rust-version = "1.88"
+
+[workspace.dependencies]
+# Internal crates
+rdesk-core = { path = "crates/rdesk-core" }
+rdesk-gfx = { path = "crates/rdesk-gfx" }
+rdesk-input = { path = "crates/rdesk-input" }
+rdesk-channels = { path = "crates/rdesk-channels" }
+rdesk-store = { path = "crates/rdesk-store" }
+rdesk-workspaces = { path = "crates/rdesk-workspaces" }
+rdesk-gateway = { path = "crates/rdesk-gateway" }
+
+# RDP stack. sspi/x509-cert are pinned to the versions ironrdp-connector 0.10 uses.
+ironrdp = { version = "0.17", features = ["connector", "session", "graphics", "pdu", "input", "svc", "dvc", "cliprdr", "displaycontrol"] }
+ironrdp-blocking = "0.10"
+ironrdp-tokio = "0.10"
+ironrdp-tls = { version = "0.2", features = ["rustls"] }
+sspi = { version = "0.21", features = ["network_client"] }
+tokio-rustls = "0.26"
+x509-cert = { version = "0.2", features = ["std"] }
+sha2 = "0.10"
+
+# Runtime & plumbing
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
+async-channel = "2"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+clap = { version = "4", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+rpassword = "7"
+
+# UI
+gtk4 = { version = "0.11", features = ["v4_14"] }
+libadwaita = { version = "0.9", features = ["v1_5"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
