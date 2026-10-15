@@ -59,6 +59,9 @@ pub struct Pc {
     /// Play the PC's audio on this computer.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub audio: bool,
+    /// Local folders the PC can open as drives.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_folders: Vec<PathBuf>,
     /// Unix time of the last successful connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_connected: Option<u64>,
@@ -88,6 +91,7 @@ impl Pc {
             nla: true,
             clipboard: true,
             audio: true,
+            shared_folders: Vec::new(),
             last_connected: None,
         }
     }

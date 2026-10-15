@@ -73,6 +73,7 @@ toml = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 oo7 = { version = "0.5", default-features = false, features = ["tokio", "native_crypto"] }
 zeroize = "1"
+rustix = { version = "1", features = ["fs"] }
 tempfile = "3"
 clap = { version = "4", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }

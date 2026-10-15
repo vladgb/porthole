@@ -18,7 +18,6 @@ use ironrdp::pdu::nego::FailureCode;
 use ironrdp::pdu::rdp::capability_sets::MajorPlatformType;
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp::rdpdr::Rdpdr;
-use ironrdp::rdpdr::backend::noop::NoopRdpdrBackend;
 use ironrdp::rdpsnd::client::Rdpsnd;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionError};
@@ -32,6 +31,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::clipboard::{self, Clipboard};
 use crate::config::{Security, SessionConfig};
+use crate::drive::DriveBackend;
 use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEvent, SessionEvent};
 use crate::framebuffer::{Framebuffer, Rect};
 use crate::gfx::GfxOutput;
@@ -209,8 +209,17 @@ async fn establish(
     });
     if let Some(audio) = &config.audio {
         connector.attach_static_channel(Rdpsnd::new(audio()));
-        // Windows only starts audio once device redirection is set up, even with no devices.
-        connector.attach_static_channel(Rdpdr::new(Box::new(NoopRdpdrBackend), config.client_name.clone()));
+    }
+    // Device redirection carries shared folders; Windows also waits for it before starting audio.
+    if config.audio.is_some() || !config.shared_folders.is_empty() {
+        let (drives, announce) = DriveBackend::new(&config.shared_folders);
+        let rdpdr = Rdpdr::new(Box::new(drives), config.client_name.clone());
+        let rdpdr = if announce.is_empty() {
+            rdpdr
+        } else {
+            rdpdr.with_drives(Some(announce))
+        };
+        connector.attach_static_channel(rdpdr);
     }
     let (display_ready_tx, display_ready) = mpsc::unbounded_channel();
     let mut drdynvc = DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(move |capabilities| {

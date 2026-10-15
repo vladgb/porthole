@@ -19,6 +19,7 @@
 
 mod clipboard;
 mod config;
+mod drive;
 mod event;
 mod framebuffer;
 mod gfx;
@@ -27,6 +28,7 @@ mod session;
 mod tls;
 
 pub use config::{AddressError, AudioOutput, Credentials, Security, SessionConfig, parse_address};
+pub use drive::SharedFolder;
 pub use event::{
     AuthFailure, CertificateInfo, CertificateProblem, CertificatePrompt, DecodedPointer, DisconnectReason,
     PointerEvent, SessionEvent,

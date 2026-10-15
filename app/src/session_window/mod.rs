@@ -36,6 +36,7 @@ pub struct Target {
     pub nla: bool,
     pub clipboard: bool,
     pub audio: bool,
+    pub shared_folders: Vec<std::path::PathBuf>,
     /// Save the password in the keyring once connected (a saved PC's "Remember password").
     pub save_password: bool,
     /// The password came from the keyring.
@@ -58,6 +59,7 @@ struct Inner {
     nla: bool,
     clipboard: bool,
     audio: bool,
+    shared_folders: Vec<std::path::PathBuf>,
     save_password: Cell<bool>,
     password_saved: Cell<bool>,
     desktop: Desktop,
@@ -112,6 +114,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         nla,
         clipboard,
         audio,
+        shared_folders,
         save_password,
         password_saved,
     } = target;
@@ -204,6 +207,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         nla,
         clipboard,
         audio,
+        shared_folders,
         save_password: Cell::new(save_password),
         password_saved: Cell::new(password_saved),
         desktop,
@@ -293,6 +297,16 @@ fn start(state: &State) {
     config.desktop_scale_factor = state.desktop.scale;
     config.keyboard_layout = input::keyboard_layout();
     config.clipboard = state.clipboard;
+    config.shared_folders = state
+        .shared_folders
+        .iter()
+        .map(|path| rdesk_core::SharedFolder {
+            name: path
+                .file_name()
+                .map_or_else(|| "Folder".to_owned(), |n| n.to_string_lossy().into_owned()),
+            path: path.clone(),
+        })
+        .collect();
     if state.audio {
         let output: rdesk_core::AudioOutput = Arc::new(|| Box::new(rdesk_audio::PipeWireOutput::new()));
         config.audio = Some(output);

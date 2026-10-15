@@ -558,6 +558,7 @@ async fn quick_connect(window: adw::ApplicationWindow, host: String, port: u16, 
         nla: true,
         clipboard: true,
         audio: true,
+        shared_folders: Vec::new(),
         save_password: false,
         password_saved: false,
     };
@@ -577,6 +578,7 @@ async fn connect_saved(window: adw::ApplicationWindow, pc: Pc) {
         nla: pc.nla,
         clipboard: pc.clipboard,
         audio: pc.audio,
+        shared_folders: pc.shared_folders.clone(),
         save_password: false,
         password_saved: false,
     };

@@ -11,6 +11,7 @@ ironrdp.workspace = true
 ironrdp-tokio.workspace = true
 ironrdp-egfx.workspace = true
 openh264.workspace = true
+rustix.workspace = true
 sspi.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
@@ -22,6 +23,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [lints]

@@ -256,6 +256,8 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     list.append(&group_row);
     list.append(&clipboard_row);
     list.append(&audio_row);
+    let folders = SharedFolders::new(pc.map_or(&[][..], |pc| &pc.shared_folders));
+    list.append(&folders.row);
     list.append(&nla_row);
     let error = gtk::Label::builder()
         .css_classes(["error", "caption"])
@@ -313,9 +315,92 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     saved.nla = nla_row.is_active();
     saved.clipboard = clipboard_row.is_active();
     saved.audio = audio_row.is_active();
+    saved.shared_folders = folders.paths.borrow().clone();
     saved.group = Some(group_row.text().trim().to_owned()).filter(|g| !g.is_empty());
     saved.username = Some(user_row.text().trim().to_owned()).filter(|u| !u.is_empty());
     Some(saved)
+}
+
+/// The "Shared Folders" row: an expandable list with remove buttons and "Add Folder…".
+struct SharedFolders {
+    row: adw::ExpanderRow,
+    paths: std::rc::Rc<std::cell::RefCell<Vec<std::path::PathBuf>>>,
+}
+
+impl SharedFolders {
+    fn new(initial: &[std::path::PathBuf]) -> Self {
+        let row = adw::ExpanderRow::builder()
+            .title("Shared Folders")
+            .subtitle("Folders the PC can open as drives")
+            .build();
+        let paths = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let add = adw::ActionRow::builder().title("Add Folder…").activatable(true).build();
+        add.add_prefix(&gtk::Image::from_icon_name("list-add-symbolic"));
+        row.add_row(&add);
+        let folders = Self { row, paths };
+        for path in initial {
+            folders.add(path.clone(), &add);
+        }
+        add.connect_activated(glib::clone!(
+            #[strong(rename_to = paths)]
+            folders.paths,
+            #[weak(rename_to = row)]
+            folders.row,
+            move |add| {
+                let dialog = gtk::FileDialog::builder().title("Share a Folder").modal(true).build();
+                let window = add.root().and_downcast::<gtk::Window>();
+                let (paths, row, add) = (paths.clone(), row.clone(), add.clone());
+                glib::spawn_future_local(async move {
+                    let Ok(folder) = dialog.select_folder_future(window.as_ref()).await else {
+                        return;
+                    };
+                    if let Some(path) = folder.path() {
+                        SharedFolders { row, paths }.add(path, &add);
+                    }
+                });
+            }
+        ));
+        folders
+    }
+
+    fn add(&self, path: std::path::PathBuf, add_row: &adw::ActionRow) {
+        if self.paths.borrow().contains(&path) {
+            return;
+        }
+        let name = path
+            .file_name()
+            .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+        let entry = adw::ActionRow::builder()
+            .title(glib::markup_escape_text(&name))
+            .subtitle(glib::markup_escape_text(&path.display().to_string()))
+            .build();
+        let remove = gtk::Button::builder()
+            .icon_name("list-remove-symbolic")
+            .tooltip_text("Stop Sharing")
+            .valign(gtk::Align::Center)
+            .css_classes(["flat"])
+            .build();
+        entry.add_suffix(&remove);
+        remove.connect_clicked(glib::clone!(
+            #[strong(rename_to = paths)]
+            self.paths,
+            #[weak(rename_to = row)]
+            self.row,
+            #[weak]
+            entry,
+            #[strong]
+            path,
+            move |_| {
+                paths.borrow_mut().retain(|p| *p != path);
+                row.remove(&entry);
+            }
+        ));
+        self.paths.borrow_mut().push(path);
+        // Keep "Add Folder…" last.
+        self.row.remove(add_row);
+        self.row.add_row(&entry);
+        self.row.add_row(add_row);
+    }
 }
 
 /// Asks before removing a saved PC.

@@ -35,6 +35,8 @@ pub struct SessionConfig {
     /// Use the Graphics Pipeline (H.264 when OpenH264 is installed, other EGFX codecs otherwise)
     /// instead of legacy bitmap updates.
     pub graphics_pipeline: bool,
+    /// Local folders that appear on the PC as drives.
+    pub shared_folders: Vec<crate::SharedFolder>,
 }
 
 impl SessionConfig {
@@ -53,6 +55,7 @@ impl SessionConfig {
             desktop_scale_factor: 0,
             audio: None,
             graphics_pipeline: true,
+            shared_folders: Vec::new(),
         }
     }
 }
@@ -68,6 +71,7 @@ impl fmt::Debug for SessionConfig {
             .field("keyboard_layout", &format_args!("{:#06x}", self.keyboard_layout))
             .field("audio", &self.audio.is_some())
             .field("graphics_pipeline", &self.graphics_pipeline)
+            .field("shared_folders", &self.shared_folders)
             .finish_non_exhaustive()
     }
 }
