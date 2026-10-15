@@ -2,6 +2,7 @@
 
 mod clipboard;
 mod input;
+mod keys;
 mod resize;
 
 use std::cell::{Cell, RefCell};
@@ -107,6 +108,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         .build();
     header.pack_start(&disconnect);
     header.pack_end(&fullscreen);
+    header.pack_end(&keys::menu_button());
 
     let connecting = adw::StatusPage::builder()
         .title(format!("Connecting to {name}"))
@@ -247,6 +249,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
     input::attach(&state);
     clipboard::attach(&state);
     resize::attach(&state);
+    keys::attach(&state);
     state
 }
 
@@ -295,6 +298,7 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
             }
             SessionEvent::Connected { width, height } => {
                 state.connected.set(true);
+                keys::connection_changed(&state);
                 if let Some(id) = state.pc
                     && let Err(e) = crate::config().store.borrow_mut().mark_connected(id)
                 {
@@ -356,6 +360,7 @@ async fn check_certificate(state: &State, certificate: &CertificateInfo, problem
 fn session_ended(state: &State, reason: DisconnectReason) {
     debug!(%reason, "Session ended");
     state.connected.set(false);
+    keys::connection_changed(state);
     state.session.replace(None);
     state.picture.set_cursor(None);
     if state.closing.take().is_some() || reason == DisconnectReason::UserRequested {
