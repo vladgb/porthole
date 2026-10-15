@@ -445,10 +445,37 @@ fn describe_io(e: &io::Error) -> String {
 // ── Active session ───────────────────────────────────────────────────────────
 
 fn protocol_error(e: SessionError) -> DisconnectReason {
-    match find_io_error(&e) {
-        Some(io) => DisconnectReason::ConnectionLost(describe_io(io)),
-        None => DisconnectReason::Protocol(error_chain(&e)),
+    if let Some(io) = find_io_error(&e) {
+        return DisconnectReason::ConnectionLost(describe_io(io));
     }
+    let detail = error_chain(&e);
+    warn!(error = %detail, "Session failed");
+    let detail = strip_locations(&detail);
+    // MCS Disconnect Provider Ultimatum: the server dropped the connection deliberately.
+    if detail.contains("disconnect provider ultimatum") {
+        return DisconnectReason::ServerEnded("the PC closed the connection".to_owned());
+    }
+    DisconnectReason::Protocol(detail)
+}
+
+/// Removes IronRDP's `[context @ file:line]` markers, which mean nothing to users.
+fn strip_locations(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find('[') {
+        match rest[start..].find(']') {
+            Some(len) if rest[start..start + len].contains(" @ ") => {
+                out.push_str(&rest[..start]);
+                rest = rest[start + len + 1..].trim_start();
+            }
+            _ => {
+                out.push_str(&rest[..=start]);
+                rest = &rest[start + 1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn lost(e: io::Error) -> DisconnectReason {
@@ -802,6 +829,15 @@ mod tests {
             ConnectorErrorKind::Negotiation(FailureCode::HYBRID_REQUIRED_BY_SERVER.into()),
         );
         assert_eq!(classify_connector_error(required, false), DisconnectReason::NlaRequired);
+    }
+
+    #[test]
+    fn strips_source_locations() {
+        assert_eq!(
+            strip_locations("[decode @ /a/b.rs:1] decode error: [x @ c.rs:2] other (received disconnect)"),
+            "decode error: other (received disconnect)"
+        );
+        assert_eq!(strip_locations("keep [this] text"), "keep [this] text");
     }
 
     #[test]

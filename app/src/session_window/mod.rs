@@ -68,6 +68,13 @@ struct Inner {
     clipboard_from_remote: RefCell<Option<String>>,
     /// A pending dynamic resolution request, waiting for the window size to settle.
     resize_timeout: RefCell<Option<glib::SourceId>>,
+    /// A session in this window got connected; transient failures after that are retried.
+    was_connected: Cell<bool>,
+    /// Automatic reconnection: attempts made so far and the timer for the next one.
+    reconnect_attempts: Cell<u32>,
+    reconnect_timer: RefCell<Option<glib::SourceId>>,
+    /// A certificate the user accepted for this window, accepted again when reconnecting.
+    accepted_certificate: RefCell<Option<String>>,
 }
 
 type State = Rc<Inner>;
@@ -196,6 +203,10 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         scroll_horizontal: RefCell::default(),
         clipboard_from_remote: RefCell::default(),
         resize_timeout: RefCell::default(),
+        was_connected: Cell::new(false),
+        reconnect_attempts: Cell::new(0),
+        reconnect_timer: RefCell::default(),
+        accepted_certificate: RefCell::default(),
     });
 
     disconnect.connect_clicked(glib::clone!(
@@ -234,6 +245,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         let Some(state) = weak.upgrade() else {
             return glib::Propagation::Proceed;
         };
+        cancel_auto_reconnect(&state);
         // Disconnect politely; the window goes away now and is destroyed when the session ends.
         match state.session.borrow().as_ref() {
             Some(session) => session.disconnect(),
@@ -245,6 +257,10 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         window.set_visible(false);
         glib::Propagation::Stop
     });
+
+    // Handlers only hold weak references; the window keeps the state alive until it's destroyed.
+    let keep_alive = RefCell::new(Some(state.clone()));
+    state.window.connect_destroy(move |_| drop(keep_alive.take()));
 
     input::attach(&state);
     clipboard::attach(&state);
@@ -273,6 +289,7 @@ fn start(state: &State) {
 }
 
 async fn reconnect_session(state: State) {
+    cancel_auto_reconnect(&state);
     let reason = state.last_reason.borrow().clone();
     if let Some(DisconnectReason::Authentication(failure)) = reason {
         let username = state.credentials.borrow().username.clone();
@@ -298,6 +315,8 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
             }
             SessionEvent::Connected { width, height } => {
                 state.connected.set(true);
+                state.was_connected.set(true);
+                state.reconnect_attempts.set(0);
                 keys::connection_changed(&state);
                 if let Some(id) = state.pc
                     && let Err(e) = crate::config().store.borrow_mut().mark_connected(id)
@@ -333,14 +352,19 @@ async fn check_certificate(state: &State, certificate: &CertificateInfo, problem
         .store
         .borrow()
         .certificate_trust(&state.host, state.port, fingerprint);
-    if trust == CertificateTrust::Trusted {
+    if trust == CertificateTrust::Trusted
+        || state.accepted_certificate.borrow().as_deref() == Some(fingerprint.as_str())
+    {
         debug!(host = %state.host, "Certificate trusted earlier");
         return true;
     }
     let changed = trust == CertificateTrust::Changed;
     match dialogs::ask_certificate_trust(&state.window, certificate, problem, changed).await {
         CertificateDecision::Reject => false,
-        CertificateDecision::AcceptOnce => true,
+        CertificateDecision::AcceptOnce => {
+            state.accepted_certificate.replace(Some(fingerprint.clone()));
+            true
+        }
         CertificateDecision::AcceptAlways => {
             let saved = config
                 .store
@@ -357,6 +381,65 @@ async fn check_certificate(state: &State, certificate: &CertificateInfo, problem
     }
 }
 
+/// Waits before each automatic reconnection attempt.
+const RECONNECT_DELAYS: [u32; 5] = [2, 4, 8, 15, 30];
+
+/// Retries a lost session after a delay, showing a countdown. Returns whether a retry is scheduled.
+/// Only for sessions that were connected before, and never for sign-in failures (`may_retry`).
+fn schedule_auto_reconnect(state: &State, reason: &DisconnectReason) -> bool {
+    let attempt = state.reconnect_attempts.get();
+    let Some(&delay) = RECONNECT_DELAYS.get(attempt as usize) else {
+        return false;
+    };
+    if !state.was_connected.get() || !reason.may_retry() {
+        return false;
+    }
+    state.reconnect_attempts.set(attempt + 1);
+    state.ended.set_title("Reconnecting…");
+    state.reconnect.set_label("Reconnect Now");
+    state.title.set_subtitle("Reconnecting…");
+    state.stack.set_visible_child_name("ended");
+
+    let reason = glib::markup_escape_text(&reason.to_string());
+    let total = RECONNECT_DELAYS.len();
+    let remaining = Cell::new(delay);
+    let update = {
+        let ended = state.ended.clone();
+        move |seconds: u32| {
+            ended.set_description(Some(&format!(
+                "{reason}\n\nTrying again in {seconds} s (attempt {} of {total}).",
+                attempt + 1
+            )));
+        }
+    };
+    update(delay);
+    let weak = Rc::downgrade(state);
+    let timer = glib::timeout_add_seconds_local(1, move || {
+        let Some(state) = weak.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        let left = remaining.get().saturating_sub(1);
+        remaining.set(left);
+        if left > 0 {
+            update(left);
+            return glib::ControlFlow::Continue;
+        }
+        state.reconnect_timer.take();
+        debug!(attempt = attempt + 1, "Reconnecting automatically");
+        start(&state);
+        glib::ControlFlow::Break
+    });
+    cancel_auto_reconnect(state);
+    state.reconnect_timer.replace(Some(timer));
+    true
+}
+
+fn cancel_auto_reconnect(state: &State) {
+    if let Some(timer) = state.reconnect_timer.take() {
+        timer.remove();
+    }
+}
+
 fn session_ended(state: &State, reason: DisconnectReason) {
     debug!(%reason, "Session ended");
     state.connected.set(false);
@@ -365,6 +448,10 @@ fn session_ended(state: &State, reason: DisconnectReason) {
     state.picture.set_cursor(None);
     if state.closing.take().is_some() || reason == DisconnectReason::UserRequested {
         state.window.destroy();
+        return;
+    }
+    if schedule_auto_reconnect(state, &reason) {
+        state.last_reason.replace(Some(reason));
         return;
     }
     if state.window.is_fullscreen() {
