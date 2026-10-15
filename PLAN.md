@@ -368,6 +368,8 @@ Status 2026-10-14: steps 1–4 done; spike verified against xrdp and Windows 11 
 
 Phase 1 progress (2026-10-15): `rdesk-core` session engine, `rdesk-input` key table, `rdesk-cli screenshot`, and the app's quick connect → sign-in → certificate prompt → session window (rendering, keyboard, mouse, wheel, remote cursor, full screen, readable disconnect reasons) work against Windows 11 with NLA. `rdesk-store` keeps saved PCs (add/edit/remove, per-PC NLA switch) and "always trust" certificate fingerprints per host:port as TOML in `$XDG_CONFIG_HOME/rdesk/`. The keyboard layout announced to the PC follows the active local layout (XKB name → Windows KLID). Text clipboard is shared both ways over CLIPRDR (per-PC switch). Phase 1 feature-complete; next is Phase 2.
 
+Phase 2/3 progress (2026-10-15): dynamic resolution with HiDPI scale (Display Control DVC), Send Keys menu + full-screen shortcut inhibition, automatic reconnection, grid/list of saved PCs with last-session thumbnails, groups, search and sort, passwords in the keyring (oo7), audio playback via PipeWire (RDPSND, new `rdesk-audio` crate). Not started: EGFX/H.264, multi-monitor, microphone, clipboard images/files, drive/printer/smart-card redirection, Kerberos, `.rdp` import/export + URI handler, gateways, packaging.
+
 1. Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
 2. Install system deps (Ubuntu): `sudo apt install libgtk-4-dev libadwaita-1-dev libpipewire-0.3-dev libpcsclite-dev pkg-config clang`.
 3. Create the Cargo workspace skeleton from §3.1.
