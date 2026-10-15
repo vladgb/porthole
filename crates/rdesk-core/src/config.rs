@@ -21,6 +21,9 @@ pub struct SessionConfig {
     pub connect_timeout: Duration,
     /// Share clipboard text with the remote PC.
     pub clipboard: bool,
+    /// Display scale in percent (100–500), so the remote PC renders at the local HiDPI scale.
+    /// 0 lets the server decide.
+    pub desktop_scale_factor: u32,
 }
 
 impl SessionConfig {
@@ -36,6 +39,7 @@ impl SessionConfig {
             client_name: default_client_name(),
             connect_timeout: Duration::from_secs(20),
             clipboard: true,
+            desktop_scale_factor: 0,
         }
     }
 }

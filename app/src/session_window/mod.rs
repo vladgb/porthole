@@ -2,6 +2,7 @@
 
 mod clipboard;
 mod input;
+mod resize;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -49,7 +50,7 @@ struct Inner {
     pc: Option<Uuid>,
     nla: bool,
     clipboard: bool,
-    desktop: (u16, u16),
+    desktop: Desktop,
     credentials: RefCell<Credentials>,
 
     session: RefCell<Option<SessionHandle>>,
@@ -64,6 +65,8 @@ struct Inner {
     scroll_horizontal: RefCell<ScrollAccumulator>,
     /// The last text the remote PC copied, so it isn't offered back to it.
     clipboard_from_remote: RefCell<Option<String>>,
+    /// A pending dynamic resolution request, waiting for the window size to settle.
+    resize_timeout: RefCell<Option<glib::SourceId>>,
 }
 
 type State = Rc<Inner>;
@@ -83,7 +86,7 @@ impl SessionWindow {
     }
 }
 
-fn build(app: &adw::Application, target: Target, desktop: (u16, u16), credentials: Credentials) -> State {
+fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: Credentials) -> State {
     let Target {
         host,
         port,
@@ -190,6 +193,7 @@ fn build(app: &adw::Application, target: Target, desktop: (u16, u16), credential
         scroll_vertical: RefCell::default(),
         scroll_horizontal: RefCell::default(),
         clipboard_from_remote: RefCell::default(),
+        resize_timeout: RefCell::default(),
     });
 
     disconnect.connect_clicked(glib::clone!(
@@ -242,6 +246,7 @@ fn build(app: &adw::Application, target: Target, desktop: (u16, u16), credential
 
     input::attach(&state);
     clipboard::attach(&state);
+    resize::attach(&state);
     state
 }
 
@@ -249,7 +254,9 @@ fn start(state: &State) {
     let mut config = SessionConfig::new(state.host.clone(), state.credentials.borrow().clone());
     config.port = state.port;
     config.security = if state.nla { Security::Nla } else { Security::Tls };
-    (config.desktop_width, config.desktop_height) = state.desktop;
+    config.desktop_width = state.desktop.width;
+    config.desktop_height = state.desktop.height;
+    config.desktop_scale_factor = state.desktop.scale;
     config.keyboard_layout = input::keyboard_layout();
     config.clipboard = state.clipboard;
 
@@ -298,6 +305,7 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
                 state.picture.grab_focus();
                 input::synchronize_locks(&state);
                 clipboard::share_local(&state);
+                resize::schedule(&state);
             }
             SessionEvent::DesktopResized { width, height } => {
                 state.title.set_subtitle(&format!("{width} × {height}"));
@@ -452,10 +460,14 @@ fn set_pointer(state: &State, pointer: PointerEvent) {
     }
 }
 
-/// The remote desktop size: the logical size of the monitor the parent window is on, so the
-/// session is pixel-exact in full screen. (Dynamic resolution comes in Phase 2.)
-fn desktop_size(parent: Option<&gtk::Window>) -> (u16, u16) {
-    let fallback = (1920, 1080);
+/// The initial remote desktop: the full size of the monitor the parent window is on, in device
+/// pixels, and its scale in percent. Once the window is laid out, the desktop follows its size.
+fn desktop_size(parent: Option<&gtk::Window>) -> Desktop {
+    let fallback = Desktop {
+        width: 1920,
+        height: 1080,
+        scale: 100,
+    };
     let Some(display) = gdk::Display::default() else {
         return fallback;
     };
@@ -467,7 +479,27 @@ fn desktop_size(parent: Option<&gtk::Window>) -> (u16, u16) {
         return fallback;
     };
     let geometry = monitor.geometry();
-    let clamp = |v: i32, min: i32| u16::try_from(v.clamp(min, 8192)).unwrap_or(1024);
-    // Some servers reject odd widths.
-    (clamp(geometry.width() & !1, 640), clamp(geometry.height(), 480))
+    let scale = monitor.scale();
+    let device = |logical: i32| (f64::from(logical) * scale).round() as u32;
+    Desktop::new(device(geometry.width()), device(geometry.height()), scale)
+}
+
+/// A remote desktop size in device pixels, and the scale in percent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Desktop {
+    width: u16,
+    height: u16,
+    scale: u32,
+}
+
+impl Desktop {
+    fn new(width: u32, height: u32, scale: f64) -> Self {
+        // RDP limits; some servers also reject odd widths.
+        let clamp = |v: u32, min: u32| u16::try_from(v.clamp(min, 8192)).unwrap_or(1024);
+        Self {
+            width: clamp(width & !1, 640),
+            height: clamp(height, 480),
+            scale: ((scale * 100.0).round() as u32).clamp(100, 500),
+        }
+    }
 }

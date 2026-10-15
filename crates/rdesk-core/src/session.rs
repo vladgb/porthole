@@ -6,6 +6,9 @@ use ironrdp::connector::connection_activation::ConnectionActivationState;
 use ironrdp::connector::sspi::credssp::NStatusCode;
 use ironrdp::connector::{self, ClientConnector, ConnectionResult, ConnectorError, ConnectorErrorKind};
 use ironrdp::core::WriteBuf;
+use ironrdp::displaycontrol::client::DisplayControlClient;
+use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
+use ironrdp::dvc::DrdynvcClient;
 use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::input::{Database, Operation};
 use ironrdp::pdu::gcc::KeyboardType;
@@ -38,6 +41,7 @@ enum Command {
     SyncLocks { caps: bool, num: bool, scroll: bool },
     Pause,
     ClipboardText(Option<String>),
+    Resize { width: u32, height: u32, scale: u32 },
     Disconnect,
 }
 
@@ -77,6 +81,13 @@ impl SessionHandle {
     /// Reports the local clipboard's text (`None`: it holds no text), offered to the remote PC.
     pub fn set_clipboard_text(&self, text: Option<String>) {
         self.send(Command::ClipboardText(text));
+    }
+
+    /// Asks the remote PC to change its desktop size (device pixels) and scale (percent, 0: keep).
+    /// Takes effect once the display control channel is up; a `DesktopResized` event follows.
+    /// Servers without dynamic resolution ignore it.
+    pub fn resize(&self, width: u32, height: u32, scale: u32) {
+        self.send(Command::Resize { width, height, scale });
     }
 
     /// Asks the server to end the session; a `Disconnected` event follows.
@@ -134,7 +145,7 @@ async fn run(config: SessionConfig, events: Events, commands: Commands, framebuf
         result = establish(&config, &events) => result,
         () = wait_for_disconnect(&commands) => return DisconnectReason::UserRequested,
     };
-    let (result, framed, clipboard_signals) = match established {
+    let (result, framed, channels) = match established {
         Ok(established) => established,
         Err(reason) => return reason,
     };
@@ -144,7 +155,7 @@ async fn run(config: SessionConfig, events: Events, commands: Commands, framebuf
         height = result.desktop_size.height,
         "Connected"
     );
-    match active_session(result, framed, clipboard_signals, &events, &commands, &framebuffer).await {
+    match active_session(result, framed, channels, &events, &commands, &framebuffer).await {
         Ok(reason) | Err(reason) => reason,
     }
 }
@@ -161,10 +172,17 @@ async fn wait_for_disconnect(commands: &Commands) {
 
 type ClipboardSignals = Option<mpsc::UnboundedReceiver<clipboard::Signal>>;
 
+/// Notifications from virtual channels, which IronRDP reports through callbacks.
+struct Channels {
+    clipboard: ClipboardSignals,
+    /// Fires once the server accepts dynamic resolution changes.
+    display_ready: mpsc::UnboundedReceiver<()>,
+}
+
 async fn establish(
     config: &SessionConfig,
     events: &Events,
-) -> Result<(ConnectionResult, Framed, ClipboardSignals), DisconnectReason> {
+) -> Result<(ConnectionResult, Framed, Channels), DisconnectReason> {
     let limit = config.connect_timeout;
     let nla = config.security == Security::Nla;
 
@@ -179,6 +197,18 @@ async fn establish(
         connector.attach_static_channel(CliprdrClient::new(Box::new(backend)));
         signals
     });
+    let (display_ready_tx, display_ready) = mpsc::unbounded_channel();
+    connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(
+        move |capabilities| {
+            debug!(?capabilities, "Display control ready");
+            let _ = display_ready_tx.send(());
+            Ok(Vec::new())
+        },
+    )));
+    let channels = Channels {
+        clipboard: clipboard_signals,
+        display_ready,
+    };
 
     let should_upgrade = within(
         limit,
@@ -229,7 +259,7 @@ async fn establish(
     .await?
     .map_err(|e| classify_connector_error(e, nla))?;
 
-    Ok((result, framed, clipboard_signals))
+    Ok((result, framed, channels))
 }
 
 async fn within<T>(limit: Duration, phase: &'static str, f: impl Future<Output = T>) -> Result<T, DisconnectReason> {
@@ -304,7 +334,7 @@ fn connector_config(config: &SessionConfig) -> connector::Config {
         compression_type: None,
         multitransport_flags: None,
         performance_flags: PerformanceFlags::default() | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION,
-        desktop_scale_factor: 0,
+        desktop_scale_factor: config.desktop_scale_factor,
         hardware_id: None,
         license_cache: None,
         timezone_info: TimezoneInfo::default(),
@@ -429,7 +459,7 @@ fn lost(e: io::Error) -> DisconnectReason {
 async fn active_session(
     result: ConnectionResult,
     framed: Framed,
-    mut clipboard_signals: ClipboardSignals,
+    channels: Channels,
     events: &Events,
     commands: &Commands,
     framebuffer: &Framebuffer,
@@ -461,6 +491,11 @@ async fn active_session(
     let mut shutdown_deadline: Option<Instant> = None;
     let mut dirty: Vec<Rect> = Vec::new();
     let mut clipboard = Clipboard::default();
+    let Channels {
+        clipboard: mut clipboard_signals,
+        mut display_ready,
+    } = channels;
+    let mut display = DisplayControl::default();
 
     loop {
         let outputs = tokio::select! {
@@ -487,6 +522,10 @@ async fn active_session(
                     stage.process_fastpath_input(&mut image, &[event]).map_err(protocol_error)?
                 }
                 Ok(Command::Pause) => stage.process_fastpath_input(&mut image, &pause_sequence()).map_err(protocol_error)?,
+                Ok(Command::Resize { width, height, scale }) => {
+                    display.request(width, height, scale, &image);
+                    display.send(&mut stage)?
+                }
                 Ok(Command::ClipboardText(text)) => {
                     let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
                     match clipboard.set_local(text, channel) {
@@ -505,6 +544,10 @@ async fn active_session(
                     stage.graceful_shutdown().map_err(protocol_error)?
                 }
             },
+            Some(()) = display_ready.recv(), if !display.ready => {
+                display.ready = true;
+                display.send(&mut stage)?
+            }
             Some(signal) = recv(&mut clipboard_signals) => {
                 let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
                 match clipboard.handle(signal, channel) {
@@ -577,6 +620,45 @@ fn publish(framebuffer: &Framebuffer, events: &Events, image: &DecodedImage, dir
 
 async fn pointer(events: &Events, event: PointerEvent) {
     let _ = events.send(SessionEvent::Pointer(event)).await;
+}
+
+/// Dynamic resolution (MS-RDPEDISP): the latest requested size, sent once the channel is ready.
+#[derive(Default)]
+struct DisplayControl {
+    ready: bool,
+    pending: Option<(u32, u32, u32)>,
+    /// The last size we asked for, so repeated identical requests are dropped.
+    requested: Option<(u32, u32, u32)>,
+}
+
+impl DisplayControl {
+    fn request(&mut self, width: u32, height: u32, scale: u32, image: &DecodedImage) {
+        let (width, height) = MonitorLayoutEntry::adjust_display_size(width, height);
+        let current = (u32::from(image.width()), u32::from(image.height()));
+        let request = (width, height, scale);
+        if self.requested == Some(request) || (self.requested.is_none() && current == (width, height)) {
+            return;
+        }
+        self.pending = Some(request);
+    }
+
+    fn send(&mut self, stage: &mut ActiveStage) -> Result<Vec<ActiveStageOutput>, DisconnectReason> {
+        if !self.ready {
+            return Ok(Vec::new());
+        }
+        let Some((width, height, scale)) = self.pending.take() else {
+            return Ok(Vec::new());
+        };
+        debug!(width, height, scale, "Requesting a desktop resize");
+        let scale_factor = (scale >= 100).then_some(scale);
+        match stage.encode_resize(width, height, scale_factor, None) {
+            Some(frame) => {
+                self.requested = Some((width, height, scale));
+                Ok(vec![ActiveStageOutput::ResponseFrame(frame.map_err(protocol_error)?)])
+            }
+            None => Ok(Vec::new()),
+        }
+    }
 }
 
 fn clipboard_frames(
