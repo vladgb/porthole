@@ -1,5 +1,6 @@
 //! One window per session: remote display, input, full screen, disconnect handling.
 
+mod clipboard;
 mod input;
 
 use std::cell::{Cell, RefCell};
@@ -30,6 +31,7 @@ pub struct Target {
     /// The saved PC, if connecting to one.
     pub pc: Option<Uuid>,
     pub nla: bool,
+    pub clipboard: bool,
 }
 
 struct Inner {
@@ -46,6 +48,7 @@ struct Inner {
     port: u16,
     pc: Option<Uuid>,
     nla: bool,
+    clipboard: bool,
     desktop: (u16, u16),
     credentials: RefCell<Credentials>,
 
@@ -59,6 +62,8 @@ struct Inner {
     closing: RefCell<Option<gio::ApplicationHoldGuard>>,
     scroll_vertical: RefCell<ScrollAccumulator>,
     scroll_horizontal: RefCell<ScrollAccumulator>,
+    /// The last text the remote PC copied, so it isn't offered back to it.
+    clipboard_from_remote: RefCell<Option<String>>,
 }
 
 type State = Rc<Inner>;
@@ -85,6 +90,7 @@ fn build(app: &adw::Application, target: Target, desktop: (u16, u16), credential
         name,
         pc,
         nla,
+        clipboard,
     } = target;
     let title = adw::WindowTitle::new(&name, "Connecting…");
     let header = adw::HeaderBar::builder().title_widget(&title).build();
@@ -172,6 +178,7 @@ fn build(app: &adw::Application, target: Target, desktop: (u16, u16), credential
         port,
         pc,
         nla,
+        clipboard,
         desktop,
         credentials: RefCell::new(credentials),
         session: RefCell::default(),
@@ -182,6 +189,7 @@ fn build(app: &adw::Application, target: Target, desktop: (u16, u16), credential
         closing: RefCell::default(),
         scroll_vertical: RefCell::default(),
         scroll_horizontal: RefCell::default(),
+        clipboard_from_remote: RefCell::default(),
     });
 
     disconnect.connect_clicked(glib::clone!(
@@ -233,6 +241,7 @@ fn build(app: &adw::Application, target: Target, desktop: (u16, u16), credential
     });
 
     input::attach(&state);
+    clipboard::attach(&state);
     state
 }
 
@@ -242,6 +251,7 @@ fn start(state: &State) {
     config.security = if state.nla { Security::Nla } else { Security::Tls };
     (config.desktop_width, config.desktop_height) = state.desktop;
     config.keyboard_layout = input::keyboard_layout();
+    config.clipboard = state.clipboard;
 
     let (session, events) = rdesk_core::connect(config, crate::runtime().handle());
     state.session.replace(Some(session));
@@ -287,12 +297,14 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
                 state.stack.set_visible_child_name("display");
                 state.picture.grab_focus();
                 input::synchronize_locks(&state);
+                clipboard::share_local(&state);
             }
             SessionEvent::DesktopResized { width, height } => {
                 state.title.set_subtitle(&format!("{width} × {height}"));
             }
             SessionEvent::FrameReady => schedule_upload(&state),
             SessionEvent::Pointer(pointer) => set_pointer(&state, pointer),
+            SessionEvent::ClipboardText(text) => clipboard::set_remote(&state, text),
             SessionEvent::Disconnected(reason) => {
                 session_ended(&state, reason);
                 return;

@@ -82,6 +82,8 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
     config.port = port;
     config.desktop_width = args.width;
     config.desktop_height = args.height;
+    // A screenshot has no business with the remote clipboard.
+    config.clipboard = false;
     if args.no_nla {
         config.security = Security::Tls;
     }
@@ -153,7 +155,7 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
                 // Acknowledge, so the next update notifies again.
                 session.framebuffer().take_damage(|_| ());
             }
-            SessionEvent::Pointer(_) => {}
+            SessionEvent::Pointer(_) | SessionEvent::ClipboardText(_) => {}
             SessionEvent::Disconnected(reason) => {
                 info!(%reason, "Disconnected");
                 return Ok(if saved { 0 } else { 1 });

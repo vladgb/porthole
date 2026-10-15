@@ -272,6 +272,7 @@ async fn quick_connect(window: adw::ApplicationWindow, host: String, port: u16, 
         port,
         pc: None,
         nla: true,
+        clipboard: true,
     };
     open_session(window, target, user).await;
 }
@@ -283,6 +284,7 @@ async fn connect_saved(window: adw::ApplicationWindow, pc: Pc) {
         port: pc.port,
         pc: Some(pc.id),
         nla: pc.nla,
+        clipboard: pc.clipboard,
     };
     open_session(window, target, pc.username).await;
 }

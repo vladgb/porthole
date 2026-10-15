@@ -19,6 +19,8 @@ pub struct SessionConfig {
     /// Limit for each network phase of connecting (TCP, TLS, sign-in, activation).
     /// Time spent waiting for the user to answer a certificate prompt is not counted.
     pub connect_timeout: Duration,
+    /// Share clipboard text with the remote PC.
+    pub clipboard: bool,
 }
 
 impl SessionConfig {
@@ -33,6 +35,7 @@ impl SessionConfig {
             keyboard_layout: 0x0409,
             client_name: default_client_name(),
             connect_timeout: Duration::from_secs(20),
+            clipboard: true,
         }
     }
 }

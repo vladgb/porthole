@@ -1,6 +1,7 @@
 use std::io;
 use std::time::Duration;
 
+use ironrdp::cliprdr::{CliprdrClient, CliprdrSvcMessages};
 use ironrdp::connector::connection_activation::ConnectionActivationState;
 use ironrdp::connector::sspi::credssp::NStatusCode;
 use ironrdp::connector::{self, ClientConnector, ConnectionResult, ConnectorError, ConnectorErrorKind};
@@ -17,11 +18,12 @@ use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionError};
 use ironrdp_tokio::{FramedWrite as _, TokioFramed};
 use tokio::net::TcpStream;
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use tokio_rustls::client::TlsStream;
 use tracing::{debug, error, info, trace, warn};
 
+use crate::clipboard::{self, Clipboard};
 use crate::config::{Security, SessionConfig};
 use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEvent, SessionEvent};
 use crate::framebuffer::{Framebuffer, Rect};
@@ -35,6 +37,7 @@ enum Command {
     ReleaseAll,
     SyncLocks { caps: bool, num: bool, scroll: bool },
     Pause,
+    ClipboardText(Option<String>),
     Disconnect,
 }
 
@@ -69,6 +72,11 @@ impl SessionHandle {
     /// Pause/Break has no make/break scancode of its own; it is sent as a special sequence.
     pub fn send_pause(&self) {
         self.send(Command::Pause);
+    }
+
+    /// Reports the local clipboard's text (`None`: it holds no text), offered to the remote PC.
+    pub fn set_clipboard_text(&self, text: Option<String>) {
+        self.send(Command::ClipboardText(text));
     }
 
     /// Asks the server to end the session; a `Disconnected` event follows.
@@ -126,7 +134,7 @@ async fn run(config: SessionConfig, events: Events, commands: Commands, framebuf
         result = establish(&config, &events) => result,
         () = wait_for_disconnect(&commands) => return DisconnectReason::UserRequested,
     };
-    let (result, framed) = match established {
+    let (result, framed, clipboard_signals) = match established {
         Ok(established) => established,
         Err(reason) => return reason,
     };
@@ -136,7 +144,7 @@ async fn run(config: SessionConfig, events: Events, commands: Commands, framebuf
         height = result.desktop_size.height,
         "Connected"
     );
-    match active_session(result, framed, &events, &commands, &framebuffer).await {
+    match active_session(result, framed, clipboard_signals, &events, &commands, &framebuffer).await {
         Ok(reason) | Err(reason) => reason,
     }
 }
@@ -151,7 +159,12 @@ async fn wait_for_disconnect(commands: &Commands) {
 
 // ── Connecting ───────────────────────────────────────────────────────────────
 
-async fn establish(config: &SessionConfig, events: &Events) -> Result<(ConnectionResult, Framed), DisconnectReason> {
+type ClipboardSignals = Option<mpsc::UnboundedReceiver<clipboard::Signal>>;
+
+async fn establish(
+    config: &SessionConfig,
+    events: &Events,
+) -> Result<(ConnectionResult, Framed, ClipboardSignals), DisconnectReason> {
     let limit = config.connect_timeout;
     let nla = config.security == Security::Nla;
 
@@ -161,6 +174,11 @@ async fn establish(config: &SessionConfig, events: &Events) -> Result<(Connectio
         .map_err(|e| DisconnectReason::Unreachable(describe_io(&e)))?;
     let mut framed = TokioFramed::new(tcp);
     let mut connector = ClientConnector::new(connector_config(config), client_addr);
+    let clipboard_signals = config.clipboard.then(|| {
+        let (backend, signals) = clipboard::Backend::new();
+        connector.attach_static_channel(CliprdrClient::new(Box::new(backend)));
+        signals
+    });
 
     let should_upgrade = within(
         limit,
@@ -211,7 +229,7 @@ async fn establish(config: &SessionConfig, events: &Events) -> Result<(Connectio
     .await?
     .map_err(|e| classify_connector_error(e, nla))?;
 
-    Ok((result, framed))
+    Ok((result, framed, clipboard_signals))
 }
 
 async fn within<T>(limit: Duration, phase: &'static str, f: impl Future<Output = T>) -> Result<T, DisconnectReason> {
@@ -411,6 +429,7 @@ fn lost(e: io::Error) -> DisconnectReason {
 async fn active_session(
     result: ConnectionResult,
     framed: Framed,
+    mut clipboard_signals: ClipboardSignals,
     events: &Events,
     commands: &Commands,
     framebuffer: &Framebuffer,
@@ -441,6 +460,7 @@ async fn active_session(
     let mut input = Database::new();
     let mut shutdown_deadline: Option<Instant> = None;
     let mut dirty: Vec<Rect> = Vec::new();
+    let mut clipboard = Clipboard::default();
 
     loop {
         let outputs = tokio::select! {
@@ -467,6 +487,17 @@ async fn active_session(
                     stage.process_fastpath_input(&mut image, &[event]).map_err(protocol_error)?
                 }
                 Ok(Command::Pause) => stage.process_fastpath_input(&mut image, &pause_sequence()).map_err(protocol_error)?,
+                Ok(Command::ClipboardText(text)) => {
+                    let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
+                    match clipboard.set_local(text, channel) {
+                        Ok(Some(messages)) => clipboard_frames(&stage, messages)?,
+                        Ok(None) => Vec::new(),
+                        Err(e) => {
+                            warn!(error = %e, "Clipboard announcement failed");
+                            Vec::new()
+                        }
+                    }
+                }
                 // An explicit request, or the UI dropped the handle.
                 Ok(Command::Disconnect) | Err(_) => {
                     debug!("Requesting shutdown");
@@ -474,6 +505,24 @@ async fn active_session(
                     stage.graceful_shutdown().map_err(protocol_error)?
                 }
             },
+            Some(signal) = recv(&mut clipboard_signals) => {
+                let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
+                match clipboard.handle(signal, channel) {
+                    Ok(outcome) => {
+                        if let Some(text) = outcome.remote_text {
+                            let _ = events.send(SessionEvent::ClipboardText(text)).await;
+                        }
+                        match outcome.messages {
+                            Some(messages) => clipboard_frames(&stage, messages)?,
+                            None => Vec::new(),
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "Clipboard error");
+                        Vec::new()
+                    }
+                }
+            }
             () = sleep_until(shutdown_deadline) => {
                 debug!("Server did not close the connection in time");
                 return Ok(DisconnectReason::UserRequested);
@@ -528,6 +577,22 @@ fn publish(framebuffer: &Framebuffer, events: &Events, image: &DecodedImage, dir
 
 async fn pointer(events: &Events, event: PointerEvent) {
     let _ = events.send(SessionEvent::Pointer(event)).await;
+}
+
+fn clipboard_frames(
+    stage: &ActiveStage,
+    messages: CliprdrSvcMessages<ironrdp::cliprdr::Client>,
+) -> Result<Vec<ActiveStageOutput>, DisconnectReason> {
+    let frame = stage.process_svc_processor_messages(messages).map_err(protocol_error)?;
+    Ok(vec![ActiveStageOutput::ResponseFrame(frame)])
+}
+
+/// Waits for a clipboard signal; never resolves when the clipboard is off.
+async fn recv(signals: &mut ClipboardSignals) -> Option<clipboard::Signal> {
+    match signals {
+        Some(signals) => signals.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 async fn sleep_until(deadline: Option<Instant>) {

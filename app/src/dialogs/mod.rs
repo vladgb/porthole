@@ -174,6 +174,11 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>) -> Option<
         .subtitle("Turn off only for PCs that don't support it")
         .active(pc.is_none_or(|pc| pc.nla))
         .build();
+    let clipboard_row = adw::SwitchRow::builder()
+        .title("Share Clipboard")
+        .subtitle("Copy and paste text between this computer and the PC")
+        .active(pc.is_none_or(|pc| pc.clipboard))
+        .build();
     if let Some(pc) = pc {
         address_row.set_text(&pc.address());
         name_row.set_text(&pc.name);
@@ -187,6 +192,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>) -> Option<
     list.append(&address_row);
     list.append(&name_row);
     list.append(&user_row);
+    list.append(&clipboard_row);
     list.append(&nla_row);
     let error = gtk::Label::builder()
         .css_classes(["error", "caption"])
@@ -242,6 +248,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>) -> Option<
     saved.port = port;
     saved.name = name_row.text().trim().to_owned();
     saved.nla = nla_row.is_active();
+    saved.clipboard = clipboard_row.is_active();
     saved.username = Some(user_row.text().trim().to_owned()).filter(|u| !u.is_empty());
     Some(saved)
 }

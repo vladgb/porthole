@@ -47,6 +47,9 @@ pub struct Pc {
     /// own sign-in screen, and credentials aren't checked before the session starts.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub nla: bool,
+    /// Share clipboard text with the PC.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub clipboard: bool,
     /// Unix time of the last successful connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_connected: Option<u64>,
@@ -73,6 +76,7 @@ impl Pc {
             port,
             username: None,
             nla: true,
+            clipboard: true,
             last_connected: None,
         }
     }

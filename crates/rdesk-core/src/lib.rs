@@ -17,6 +17,7 @@
 //! # }
 //! ```
 
+mod clipboard;
 mod config;
 mod event;
 mod framebuffer;
