@@ -17,6 +17,9 @@ use ironrdp::pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
 use ironrdp::pdu::nego::FailureCode;
 use ironrdp::pdu::rdp::capability_sets::MajorPlatformType;
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
+use ironrdp::rdpdr::Rdpdr;
+use ironrdp::rdpdr::backend::noop::NoopRdpdrBackend;
+use ironrdp::rdpsnd::client::Rdpsnd;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionError};
 use ironrdp_tokio::{FramedWrite as _, TokioFramed};
@@ -197,6 +200,11 @@ async fn establish(
         connector.attach_static_channel(CliprdrClient::new(Box::new(backend)));
         signals
     });
+    if let Some(audio) = &config.audio {
+        connector.attach_static_channel(Rdpsnd::new(audio()));
+        // Windows only starts audio once device redirection is set up, even with no devices.
+        connector.attach_static_channel(Rdpdr::new(Box::new(NoopRdpdrBackend), config.client_name.clone()));
+    }
     let (display_ready_tx, display_ready) = mpsc::unbounded_channel();
     connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(
         move |capabilities| {
@@ -330,7 +338,7 @@ fn connector_config(config: &SessionConfig) -> connector::Config {
         request_data: None,
         // Sign in with the supplied credentials instead of showing the server's sign-in screen.
         autologon: true,
-        enable_audio_playback: false,
+        enable_audio_playback: config.audio.is_some(),
         compression_type: None,
         multitransport_flags: None,
         performance_flags: PerformanceFlags::default() | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION,

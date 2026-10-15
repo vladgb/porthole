@@ -56,6 +56,9 @@ pub struct Pc {
     /// Share clipboard text with the PC.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub clipboard: bool,
+    /// Play the PC's audio on this computer.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub audio: bool,
     /// Unix time of the last successful connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_connected: Option<u64>,
@@ -84,6 +87,7 @@ impl Pc {
             username: None,
             nla: true,
             clipboard: true,
+            audio: true,
             last_connected: None,
         }
     }

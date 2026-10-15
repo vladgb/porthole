@@ -7,6 +7,7 @@ mod resize;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use adw::prelude::*;
 use gtk4 as gtk;
@@ -34,6 +35,7 @@ pub struct Target {
     pub pc: Option<Uuid>,
     pub nla: bool,
     pub clipboard: bool,
+    pub audio: bool,
     /// Save the password in the keyring once connected (a saved PC's "Remember password").
     pub save_password: bool,
     /// The password came from the keyring.
@@ -55,6 +57,7 @@ struct Inner {
     pc: Option<Uuid>,
     nla: bool,
     clipboard: bool,
+    audio: bool,
     save_password: Cell<bool>,
     password_saved: Cell<bool>,
     desktop: Desktop,
@@ -108,6 +111,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         pc,
         nla,
         clipboard,
+        audio,
         save_password,
         password_saved,
     } = target;
@@ -199,6 +203,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         pc,
         nla,
         clipboard,
+        audio,
         save_password: Cell::new(save_password),
         password_saved: Cell::new(password_saved),
         desktop,
@@ -288,6 +293,10 @@ fn start(state: &State) {
     config.desktop_scale_factor = state.desktop.scale;
     config.keyboard_layout = input::keyboard_layout();
     config.clipboard = state.clipboard;
+    if state.audio {
+        let output: rdesk_core::AudioOutput = Arc::new(|| Box::new(rdesk_audio::PipeWireOutput::new()));
+        config.audio = Some(output);
+    }
 
     let (session, events) = rdesk_core::connect(config, crate::runtime().handle());
     state.session.replace(Some(session));

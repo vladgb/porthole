@@ -557,6 +557,7 @@ async fn quick_connect(window: adw::ApplicationWindow, host: String, port: u16, 
         pc: None,
         nla: true,
         clipboard: true,
+        audio: true,
         save_password: false,
         password_saved: false,
     };
@@ -575,6 +576,7 @@ async fn connect_saved(window: adw::ApplicationWindow, pc: Pc) {
         pc: Some(pc.id),
         nla: pc.nla,
         clipboard: pc.clipboard,
+        audio: pc.audio,
         save_password: false,
         password_saved: false,
     };

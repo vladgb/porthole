@@ -14,6 +14,7 @@ path = "src/main.rs"
 rdesk-core.workspace = true
 rdesk-input.workspace = true
 rdesk-store.workspace = true
+rdesk-audio.workspace = true
 # v4_16: incremental texture updates (GdkMemoryTextureBuilder update region).
 gtk4 = { workspace = true, features = ["v4_16"] }
 libadwaita.workspace = true

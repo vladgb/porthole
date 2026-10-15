@@ -1,5 +1,11 @@
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
+
+use ironrdp::rdpsnd::client::RdpsndClientHandler;
+
+/// Creates the player for a session's audio (one per connection).
+pub type AudioOutput = Arc<dyn Fn() -> Box<dyn RdpsndClientHandler> + Send + Sync>;
 
 /// Everything needed to open one session.
 #[derive(Clone)]
@@ -24,6 +30,8 @@ pub struct SessionConfig {
     /// Display scale in percent (100–500), so the remote PC renders at the local HiDPI scale.
     /// 0 lets the server decide.
     pub desktop_scale_factor: u32,
+    /// Plays the session's audio here; `None`: no audio.
+    pub audio: Option<AudioOutput>,
 }
 
 impl SessionConfig {
@@ -40,6 +48,7 @@ impl SessionConfig {
             connect_timeout: Duration::from_secs(20),
             clipboard: true,
             desktop_scale_factor: 0,
+            audio: None,
         }
     }
 }
@@ -53,6 +62,7 @@ impl fmt::Debug for SessionConfig {
             .field("security", &self.security)
             .field("desktop", &(self.desktop_width, self.desktop_height))
             .field("keyboard_layout", &format_args!("{:#06x}", self.keyboard_layout))
+            .field("audio", &self.audio.is_some())
             .finish_non_exhaustive()
     }
 }

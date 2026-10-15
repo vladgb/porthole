@@ -8,12 +8,14 @@ members = [
     "crates/rdesk-store",
     "crates/rdesk-workspaces",
     "crates/rdesk-gateway",
+    "crates/rdesk-audio",
     "app",
     "cli",
     "spikes/rdp-screenshot",
     "spikes/gtk-texture",
 ]
-# `app` and `spikes/gtk-texture` need GTK4/libadwaita system libraries; everything else builds with only a Rust toolchain.
+# `app`, `rdesk-audio` and `spikes/gtk-texture` need system libraries (GTK4/libadwaita, PipeWire + libclang);
+# everything else builds with only a Rust toolchain.
 default-members = [
     "crates/rdesk-core",
     "crates/rdesk-gfx",
@@ -42,9 +44,10 @@ rdesk-channels = { path = "crates/rdesk-channels" }
 rdesk-store = { path = "crates/rdesk-store" }
 rdesk-workspaces = { path = "crates/rdesk-workspaces" }
 rdesk-gateway = { path = "crates/rdesk-gateway" }
+rdesk-audio = { path = "crates/rdesk-audio" }
 
 # RDP stack. sspi/x509-cert are pinned to the versions ironrdp-connector 0.10 uses.
-ironrdp = { version = "0.17", features = ["core", "connector", "session", "graphics", "pdu", "input", "svc", "dvc", "cliprdr", "displaycontrol"] }
+ironrdp = { version = "0.17", features = ["core", "connector", "session", "graphics", "pdu", "input", "svc", "dvc", "cliprdr", "displaycontrol", "rdpsnd", "rdpdr"] }
 ironrdp-blocking = "0.10"
 ironrdp-tokio = "0.10"
 ironrdp-tls = { version = "0.2", features = ["rustls"] }
@@ -53,6 +56,8 @@ tokio-rustls = "0.26"
 rustls-native-certs = "0.8"
 x509-cert = { version = "0.2", features = ["std"] }
 sha2 = "0.10"
+ironrdp-rdpsnd = "0.9"
+pipewire = "0.10"
 
 # Runtime & plumbing
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }

@@ -224,6 +224,11 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
         actions.add_action(&set_group);
         group_row.insert_action_group("pc", Some(&actions));
     }
+    let audio_row = adw::SwitchRow::builder()
+        .title("Play Audio")
+        .subtitle("Play the PC's sound on this computer")
+        .active(pc.is_none_or(|pc| pc.audio))
+        .build();
     let nla_row = adw::SwitchRow::builder()
         .title("Network Level Authentication")
         .subtitle("Turn off only for PCs that don't support it")
@@ -250,6 +255,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     list.append(&user_row);
     list.append(&group_row);
     list.append(&clipboard_row);
+    list.append(&audio_row);
     list.append(&nla_row);
     let error = gtk::Label::builder()
         .css_classes(["error", "caption"])
@@ -306,6 +312,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     saved.name = name_row.text().trim().to_owned();
     saved.nla = nla_row.is_active();
     saved.clipboard = clipboard_row.is_active();
+    saved.audio = audio_row.is_active();
     saved.group = Some(group_row.text().trim().to_owned()).filter(|g| !g.is_empty());
     saved.username = Some(user_row.text().trim().to_owned()).filter(|u| !u.is_empty());
     Some(saved)
