@@ -3,6 +3,10 @@
 //! Keys are sent as scancodes, so the remote side applies its own keyboard layout, exactly like a
 //! physical keyboard. On Linux, GDK hardware keycodes are evdev codes + 8 on both X11 and Wayland.
 
+mod layout;
+
+pub use layout::{DEFAULT_LAYOUT, klid_from_layout_name};
+
 /// A key as RDP sends it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Key {

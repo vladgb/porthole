@@ -366,7 +366,7 @@ Rough sizing assumes one experienced Rust developer; parallelize where possible.
 
 Status 2026-10-14: steps 1–4 done; spike verified against xrdp and Windows 11 Pro with NLA (see `docs/phase0-ironrdp-spike.md`). GTK4 texture spike done (see `docs/phase0-gtk-texture-spike.md`): memory textures hold 60 fps at 1080p; 4K needs the Phase 2 GL/dmabuf path.
 
-Phase 1 progress (2026-10-15): `rdesk-core` session engine, `rdesk-input` key table, `rdesk-cli screenshot`, and the app's quick connect → sign-in → certificate prompt → session window (rendering, keyboard, mouse, wheel, remote cursor, full screen, readable disconnect reasons) work against Windows 11 with NLA. `rdesk-store` keeps saved PCs (add/edit/remove, per-PC NLA switch) and "always trust" certificate fingerprints per host:port as TOML in `$XDG_CONFIG_HOME/rdesk/`. Still to do: text clipboard, keyboard layout id from the local layout.
+Phase 1 progress (2026-10-15): `rdesk-core` session engine, `rdesk-input` key table, `rdesk-cli screenshot`, and the app's quick connect → sign-in → certificate prompt → session window (rendering, keyboard, mouse, wheel, remote cursor, full screen, readable disconnect reasons) work against Windows 11 with NLA. `rdesk-store` keeps saved PCs (add/edit/remove, per-PC NLA switch) and "always trust" certificate fingerprints per host:port as TOML in `$XDG_CONFIG_HOME/rdesk/`. The keyboard layout announced to the PC follows the active local layout (XKB name → Windows KLID). Still to do: text clipboard.
 
 1. Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
 2. Install system deps (Ubuntu): `sudo apt install libgtk-4-dev libadwaita-1-dev libpipewire-0.3-dev libpcsclite-dev pkg-config clang`.

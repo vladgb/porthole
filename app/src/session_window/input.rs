@@ -5,7 +5,7 @@ use gtk4::prelude::*;
 use gtk4::{gdk, glib};
 use rdesk_core::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 use rdesk_input::{Key, ScrollUnit};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::State;
 
@@ -152,6 +152,42 @@ pub(super) fn synchronize_locks(state: &State) {
             keyboard.is_num_locked(),
             keyboard.is_scroll_locked(),
         );
+    }
+}
+
+/// The Windows layout id matching the active local keyboard layout.
+pub(super) fn keyboard_layout() -> u32 {
+    let Some(keyboard) = gdk::Display::default()
+        .and_then(|d| d.default_seat())
+        .and_then(|seat| seat.keyboard())
+    else {
+        return rdesk_input::DEFAULT_LAYOUT;
+    };
+    // Properties rather than the typed getters, which would raise the minimum GTK to 4.18.
+    let has = |name| keyboard.find_property(name).is_some();
+    if !has("layout-names") || !has("active-layout-index") {
+        debug!("GTK doesn't report keyboard layouts (needs 4.18); using US English");
+        return rdesk_input::DEFAULT_LAYOUT;
+    }
+    let names: Vec<String> = keyboard
+        .property::<glib::StrV>("layout-names")
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+    let active = usize::try_from(keyboard.property::<i32>("active-layout-index")).ok();
+    let Some(name) = active.and_then(|i| names.get(i)) else {
+        debug!(?names, "Active keyboard layout unknown; using US English");
+        return rdesk_input::DEFAULT_LAYOUT;
+    };
+    match rdesk_input::klid_from_layout_name(name) {
+        Some(klid) => {
+            debug!(layout = %name, klid = format_args!("{klid:#010x}"), "Keyboard layout");
+            klid
+        }
+        None => {
+            warn!(layout = %name, "No Windows equivalent for the keyboard layout; using US English");
+            rdesk_input::DEFAULT_LAYOUT
+        }
     }
 }
 

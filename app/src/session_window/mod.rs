@@ -241,6 +241,7 @@ fn start(state: &State) {
     config.port = state.port;
     config.security = if state.nla { Security::Nla } else { Security::Tls };
     (config.desktop_width, config.desktop_height) = state.desktop;
+    config.keyboard_layout = input::keyboard_layout();
 
     let (session, events) = rdesk_core::connect(config, crate::runtime().handle());
     state.session.replace(Some(session));
