@@ -15,6 +15,7 @@ pub use uuid::Uuid;
 
 const PCS_FILE: &str = "pcs.toml";
 const CERTIFICATES_FILE: &str = "trusted-certificates.toml";
+const SETTINGS_FILE: &str = "settings.toml";
 const FORMAT_VERSION: u32 = 1;
 const DEFAULT_PORT: u16 = 3389;
 
@@ -40,6 +41,9 @@ pub struct Pc {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Groups PCs in the main window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// `DOMAIN\user`, `user@domain` or `user`. Asked for when connecting if missing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
@@ -74,6 +78,7 @@ impl Pc {
             name: String::new(),
             host: host.into(),
             port,
+            group: None,
             username: None,
             nla: true,
             clipboard: true,
@@ -120,6 +125,39 @@ struct TrustedCertificate {
     added: u64,
 }
 
+/// How the main window shows saved PCs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Layout {
+    #[default]
+    Grid,
+    List,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortOrder {
+    #[default]
+    Name,
+    /// Most recently connected first.
+    Recent,
+}
+
+/// App preferences.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    pub layout: Layout,
+    pub sort: SortOrder,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SettingsFile {
+    version: u32,
+    #[serde(default)]
+    view: Settings,
+}
+
 #[derive(Serialize, Deserialize)]
 struct PcsFile {
     version: u32,
@@ -146,26 +184,33 @@ pub struct Recovered {
 pub struct Store {
     /// `None`: nothing is saved (used when the configuration can't be read safely).
     dir: Option<PathBuf>,
+    /// Thumbnails; `None`: not kept.
+    cache_dir: Option<PathBuf>,
     pcs: Vec<Pc>,
     certificates: Vec<TrustedCertificate>,
+    settings: Settings,
     recovered: Vec<Recovered>,
 }
 
 impl Store {
     /// Opens the store in `$XDG_CONFIG_HOME/rdesk` (or `~/.config/rdesk`).
+    /// Thumbnails go to `$XDG_CACHE_HOME/rdesk/thumbnails` (or `~/.cache/...`).
     pub fn open_default() -> Result<Self, StoreError> {
-        Self::open(default_dir().ok_or(StoreError::NoConfigDir)?)
+        let dir = xdg_dir("XDG_CONFIG_HOME", ".config").ok_or(StoreError::NoConfigDir)?;
+        Self::open(dir, xdg_dir("XDG_CACHE_HOME", ".cache").map(|d| d.join("thumbnails")))
     }
 
     /// Opens the store in `dir`. Missing files are fine; unreadable TOML is moved aside.
-    pub fn open(dir: impl Into<PathBuf>) -> Result<Self, StoreError> {
+    pub fn open(dir: impl Into<PathBuf>, cache_dir: Option<PathBuf>) -> Result<Self, StoreError> {
         let dir = dir.into();
         let mut recovered = Vec::new();
         let pcs: Option<PcsFile> = load(&dir.join(PCS_FILE), &mut recovered)?;
         let certificates: Option<CertificatesFile> = load(&dir.join(CERTIFICATES_FILE), &mut recovered)?;
+        let settings: Option<SettingsFile> = load(&dir.join(SETTINGS_FILE), &mut recovered)?;
         for (version, file) in [
             (pcs.as_ref().map(|f| f.version), PCS_FILE),
             (certificates.as_ref().map(|f| f.version), CERTIFICATES_FILE),
+            (settings.as_ref().map(|f| f.version), SETTINGS_FILE),
         ] {
             if let Some(found) = version.filter(|&v| v > FORMAT_VERSION) {
                 return Err(StoreError::NewerFormat {
@@ -178,8 +223,10 @@ impl Store {
         sort(&mut pcs);
         Ok(Self {
             dir: Some(dir),
+            cache_dir,
             pcs,
             certificates: certificates.map(|f| f.certificates).unwrap_or_default(),
+            settings: settings.map(|f| f.view).unwrap_or_default(),
             recovered,
         })
     }
@@ -188,8 +235,10 @@ impl Store {
     pub fn in_memory() -> Self {
         Self {
             dir: None,
+            cache_dir: None,
             pcs: Vec::new(),
             certificates: Vec::new(),
+            settings: Settings::default(),
             recovered: Vec::new(),
         }
     }
@@ -224,7 +273,46 @@ impl Store {
         if self.pcs.len() == before {
             return Ok(());
         }
+        if let Some(thumbnail) = self.thumbnail_path(id) {
+            let _ = fs::remove_file(thumbnail);
+        }
         self.write_pcs()
+    }
+
+    /// Group names in use, sorted.
+    pub fn groups(&self) -> Vec<String> {
+        let mut groups: Vec<String> = self.pcs.iter().filter_map(|pc| pc.group.clone()).collect();
+        groups.sort_by_key(|g| g.to_lowercase());
+        groups.dedup();
+        groups
+    }
+
+    /// Where the PC's last-session thumbnail (PNG) is kept, if thumbnails are kept at all.
+    pub fn thumbnail_path(&self, id: Uuid) -> Option<PathBuf> {
+        Some(self.cache_dir.as_ref()?.join(format!("{id}.png")))
+    }
+
+    pub fn save_thumbnail(&self, id: Uuid, png: &[u8]) -> Result<(), StoreError> {
+        let (Some(dir), Some(path)) = (&self.cache_dir, self.thumbnail_path(id)) else {
+            return Ok(());
+        };
+        write_atomic(dir, &path, png).map_err(|source| StoreError::Write { path, source })
+    }
+
+    pub fn settings(&self) -> &Settings {
+        &self.settings
+    }
+
+    pub fn save_settings(&mut self, settings: Settings) -> Result<(), StoreError> {
+        if self.settings == settings {
+            return Ok(());
+        }
+        self.settings = settings;
+        let file = SettingsFile {
+            version: FORMAT_VERSION,
+            view: self.settings.clone(),
+        };
+        self.write(SETTINGS_FILE, &file)
     }
 
     /// Records a successful connection.
@@ -289,11 +377,12 @@ impl Store {
     }
 }
 
-fn default_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+/// `$VAR/rdesk`, or `~/<fallback>/rdesk` when the variable is unset or not absolute.
+fn xdg_dir(var: &str, fallback: &str) -> Option<PathBuf> {
+    let base = std::env::var_os(var)
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".config")))?;
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(fallback)))?;
     Some(base.join("rdesk"))
 }
 
@@ -332,7 +421,9 @@ fn write_atomic(dir: &Path, path: &Path, contents: &[u8]) -> io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
     fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
-    let tmp = path.with_extension("toml.tmp");
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -366,7 +457,7 @@ mod tests {
     #[test]
     fn pcs_round_trip_sorted_by_name() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::open(dir.path()).unwrap();
+        let mut store = Store::open(dir.path(), None).unwrap();
         assert!(store.pcs().is_empty());
 
         let mut office = Pc::new("office.example", 3389);
@@ -378,7 +469,7 @@ mod tests {
         store.save_pc(lab.clone()).unwrap();
         store.mark_connected(lab.id).unwrap();
 
-        let reopened = Store::open(dir.path()).unwrap();
+        let reopened = Store::open(dir.path(), None).unwrap();
         let names: Vec<_> = reopened.pcs().iter().map(Pc::display_name).collect();
         assert_eq!(names, ["10.0.0.5:3390", "office"]);
         assert_eq!(reopened.pc(office.id), Some(&office));
@@ -387,13 +478,13 @@ mod tests {
 
         let mut store = reopened;
         store.remove_pc(office.id).unwrap();
-        assert_eq!(Store::open(dir.path()).unwrap().pcs().len(), 1);
+        assert_eq!(Store::open(dir.path(), None).unwrap().pcs().len(), 1);
     }
 
     #[test]
     fn editing_keeps_identity() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::open(dir.path()).unwrap();
+        let mut store = Store::open(dir.path(), None).unwrap();
         let mut pc = Pc::new("a", 3389);
         store.save_pc(pc.clone()).unwrap();
         pc.host = "b".into();
@@ -404,11 +495,11 @@ mod tests {
     #[test]
     fn certificate_trust_per_host_and_port() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::open(dir.path()).unwrap();
+        let mut store = Store::open(dir.path(), None).unwrap();
         assert_eq!(store.certificate_trust("pc", 3389, FP_A), CertificateTrust::Unknown);
 
         store.trust_certificate("PC.", 3389, FP_A).unwrap();
-        let store = Store::open(dir.path()).unwrap();
+        let store = Store::open(dir.path(), None).unwrap();
         assert_eq!(store.certificate_trust("pc", 3389, "aa:bb"), CertificateTrust::Trusted);
         assert_eq!(store.certificate_trust("pc", 3389, FP_B), CertificateTrust::Changed);
         assert_eq!(store.certificate_trust("pc", 3390, FP_A), CertificateTrust::Unknown);
@@ -423,7 +514,7 @@ mod tests {
     fn broken_file_is_moved_aside() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(PCS_FILE), "this is [not toml").unwrap();
-        let store = Store::open(dir.path()).unwrap();
+        let store = Store::open(dir.path(), None).unwrap();
         assert!(store.pcs().is_empty());
         let [recovered] = store.recovered() else { panic!() };
         assert!(recovered.backup.exists());
@@ -435,7 +526,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(PCS_FILE), "version = 2\n").unwrap();
         assert!(matches!(
-            Store::open(dir.path()),
+            Store::open(dir.path(), None),
             Err(StoreError::NewerFormat { found: 2, .. })
         ));
     }
@@ -445,10 +536,36 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("rdesk");
-        Store::open(&config).unwrap().save_pc(Pc::new("a", 3389)).unwrap();
+        Store::open(&config, None).unwrap().save_pc(Pc::new("a", 3389)).unwrap();
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&config), 0o700);
         assert_eq!(mode(&config.join(PCS_FILE)), 0o600);
+    }
+
+    #[test]
+    fn settings_and_thumbnails() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let mut store = Store::open(dir.path(), Some(cache.clone())).unwrap();
+        assert_eq!(store.settings(), &Settings::default());
+        let settings = Settings {
+            layout: Layout::List,
+            sort: SortOrder::Recent,
+        };
+        store.save_settings(settings.clone()).unwrap();
+
+        let mut pc = Pc::new("a", 3389);
+        pc.group = Some("Lab".into());
+        store.save_pc(pc.clone()).unwrap();
+        store.save_thumbnail(pc.id, b"png").unwrap();
+        let thumbnail = store.thumbnail_path(pc.id).unwrap();
+        assert!(thumbnail.exists());
+
+        let mut store = Store::open(dir.path(), Some(cache)).unwrap();
+        assert_eq!(store.settings(), &settings);
+        assert_eq!(store.groups(), ["Lab"]);
+        store.remove_pc(pc.id).unwrap();
+        assert!(!thumbnail.exists());
     }
 
     #[test]

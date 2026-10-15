@@ -155,7 +155,8 @@ pub async fn ask_certificate_trust(
 }
 
 /// Add (`pc` is `None`) or edit a saved PC. Returns the PC to save.
-pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>) -> Option<Pc> {
+/// `groups`: existing group names, offered as suggestions.
+pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[String]) -> Option<Pc> {
     let address_row = adw::EntryRow::builder()
         .title("PC name or IP address")
         .input_purpose(gtk::InputPurpose::Url)
@@ -169,6 +170,40 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>) -> Option<
         .title("User name (optional)")
         .activates_default(true)
         .build();
+    let group_row = adw::EntryRow::builder()
+        .title("Group (optional)")
+        .activates_default(true)
+        .build();
+    if !groups.is_empty() {
+        // Pick an existing group from a menu, or type a new one.
+        let menu = gtk4::gio::Menu::new();
+        for group in groups {
+            let item = gtk4::gio::MenuItem::new(Some(group), None);
+            item.set_action_and_target_value(Some("pc.group"), Some(&group.to_variant()));
+            menu.append_item(&item);
+        }
+        let pick = gtk::MenuButton::builder()
+            .icon_name("pan-down-symbolic")
+            .tooltip_text("Existing Groups")
+            .valign(gtk::Align::Center)
+            .css_classes(["flat"])
+            .menu_model(&menu)
+            .build();
+        group_row.add_suffix(&pick);
+        let actions = gtk4::gio::SimpleActionGroup::new();
+        let set_group = gtk4::gio::SimpleAction::new("group", Some(glib::VariantTy::STRING));
+        set_group.connect_activate(glib::clone!(
+            #[weak]
+            group_row,
+            move |_, value| {
+                if let Some(value) = value.and_then(|v| v.str()) {
+                    group_row.set_text(value);
+                }
+            }
+        ));
+        actions.add_action(&set_group);
+        group_row.insert_action_group("pc", Some(&actions));
+    }
     let nla_row = adw::SwitchRow::builder()
         .title("Network Level Authentication")
         .subtitle("Turn off only for PCs that don't support it")
@@ -183,6 +218,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>) -> Option<
         address_row.set_text(&pc.address());
         name_row.set_text(&pc.name);
         user_row.set_text(pc.username.as_deref().unwrap_or_default());
+        group_row.set_text(pc.group.as_deref().unwrap_or_default());
     }
     let list = gtk::ListBox::builder()
         .selection_mode(gtk::SelectionMode::None)
@@ -192,6 +228,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>) -> Option<
     list.append(&address_row);
     list.append(&name_row);
     list.append(&user_row);
+    list.append(&group_row);
     list.append(&clipboard_row);
     list.append(&nla_row);
     let error = gtk::Label::builder()
@@ -249,6 +286,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>) -> Option<
     saved.name = name_row.text().trim().to_owned();
     saved.nla = nla_row.is_active();
     saved.clipboard = clipboard_row.is_active();
+    saved.group = Some(group_row.text().trim().to_owned()).filter(|g| !g.is_empty());
     saved.username = Some(user_row.text().trim().to_owned()).filter(|u| !u.is_empty());
     Some(saved)
 }

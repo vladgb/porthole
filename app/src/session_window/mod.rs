@@ -440,8 +440,37 @@ fn cancel_auto_reconnect(state: &State) {
     }
 }
 
+/// Keeps a small picture of the last frame for the saved PC's tile in the main window.
+fn save_thumbnail(state: &State) {
+    let (Some(id), Some(texture)) = (state.pc, state.texture.borrow().clone()) else {
+        return;
+    };
+    let Some(png) = thumbnail_png(&state.window, &texture) else {
+        return;
+    };
+    if let Err(e) = crate::config().store.borrow().save_thumbnail(id, &png) {
+        warn!(error = %e, "Couldn't save the thumbnail");
+        return;
+    }
+    crate::connection_center::refresh_saved();
+}
+
+/// Downscales on the GPU (or whatever renders the window) and encodes as PNG.
+fn thumbnail_png(window: &impl IsA<gtk::Native>, texture: &gdk::Texture) -> Option<glib::Bytes> {
+    const WIDTH: f32 = 480.0;
+    let (width, height) = (texture.width() as f32, texture.height() as f32);
+    let scale = (WIDTH / width).min(1.0);
+    let bounds = gtk4::graphene::Rect::new(0.0, 0.0, (width * scale).round(), (height * scale).round());
+    let snapshot = gtk::Snapshot::new();
+    snapshot.append_scaled_texture(texture, gtk4::gsk::ScalingFilter::Trilinear, &bounds);
+    let node = snapshot.to_node()?;
+    let renderer = window.renderer()?;
+    Some(renderer.render_texture(node, Some(&bounds)).save_to_png_bytes())
+}
+
 fn session_ended(state: &State, reason: DisconnectReason) {
     debug!(%reason, "Session ended");
+    save_thumbnail(state);
     state.connected.set(false);
     keys::connection_changed(state);
     state.session.replace(None);
