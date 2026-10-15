@@ -22,6 +22,7 @@ use ironrdp::rdpdr::backend::noop::NoopRdpdrBackend;
 use ironrdp::rdpsnd::client::Rdpsnd;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionError};
+use ironrdp_egfx::client::GraphicsPipelineClient;
 use ironrdp_tokio::{FramedWrite as _, TokioFramed};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
@@ -33,6 +34,8 @@ use crate::clipboard::{self, Clipboard};
 use crate::config::{Security, SessionConfig};
 use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEvent, SessionEvent};
 use crate::framebuffer::{Framebuffer, Rect};
+use crate::gfx::GfxOutput;
+use crate::h264;
 use crate::tls;
 
 /// How long to wait for the server to close the connection after we ask it to.
@@ -145,7 +148,7 @@ async fn run(config: SessionConfig, events: Events, commands: Commands, framebuf
     info!(host = %config.host, port = config.port, security = ?config.security, "Connecting");
     let started = Instant::now();
     let established = tokio::select! {
-        result = establish(&config, &events) => result,
+        result = establish(&config, &events, &framebuffer) => result,
         () = wait_for_disconnect(&commands) => return DisconnectReason::UserRequested,
     };
     let (result, framed, channels) = match established {
@@ -185,6 +188,7 @@ struct Channels {
 async fn establish(
     config: &SessionConfig,
     events: &Events,
+    framebuffer: &Framebuffer,
 ) -> Result<(ConnectionResult, Framed, Channels), DisconnectReason> {
     let limit = config.connect_timeout;
     let nla = config.security == Security::Nla;
@@ -194,7 +198,10 @@ async fn establish(
         .local_addr()
         .map_err(|e| DisconnectReason::Unreachable(describe_io(&e)))?;
     let mut framed = TokioFramed::new(tcp);
-    let mut connector = ClientConnector::new(connector_config(config), client_addr);
+    let h264 = config.graphics_pipeline.then(h264::decoder).flatten();
+    let mut connector_config = connector_config(config);
+    connector_config.enable_gfx = h264.is_some();
+    let mut connector = ClientConnector::new(connector_config, client_addr);
     let clipboard_signals = config.clipboard.then(|| {
         let (backend, signals) = clipboard::Backend::new();
         connector.attach_static_channel(CliprdrClient::new(Box::new(backend)));
@@ -206,13 +213,20 @@ async fn establish(
         connector.attach_static_channel(Rdpdr::new(Box::new(NoopRdpdrBackend), config.client_name.clone()));
     }
     let (display_ready_tx, display_ready) = mpsc::unbounded_channel();
-    connector.attach_static_channel(DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(
-        move |capabilities| {
-            debug!(?capabilities, "Display control ready");
-            let _ = display_ready_tx.send(());
-            Ok(Vec::new())
-        },
-    )));
+    let mut drdynvc = DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(move |capabilities| {
+        debug!(?capabilities, "Display control ready");
+        let _ = display_ready_tx.send(());
+        Ok(Vec::new())
+    }));
+    // The Graphics Pipeline only with H.264: Windows then sends almost everything as H.264.
+    // Without it the server would lean on codecs IronRDP doesn't decode reliably yet, so the
+    // session stays on legacy bitmap updates.
+    if let Some(h264) = h264 {
+        let h264 = h264::SharedDecoder::new(h264);
+        let output = GfxOutput::new(framebuffer.clone(), events.clone(), h264.clone());
+        drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(output), Some(Box::new(h264))));
+    }
+    connector.attach_static_channel(drdynvc);
     let channels = Channels {
         clipboard: clipboard_signals,
         display_ready,
@@ -339,6 +353,7 @@ fn connector_config(config: &SessionConfig) -> connector::Config {
         // Sign in with the supplied credentials instead of showing the server's sign-in screen.
         autologon: true,
         enable_audio_playback: config.audio.is_some(),
+        enable_gfx: false,
         compression_type: None,
         multitransport_flags: None,
         performance_flags: PerformanceFlags::default() | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION,
@@ -558,7 +573,7 @@ async fn active_session(
                 }
                 Ok(Command::Pause) => stage.process_fastpath_input(&mut image, &pause_sequence()).map_err(protocol_error)?,
                 Ok(Command::Resize { width, height, scale }) => {
-                    display.request(width, height, scale, &image);
+                    display.request(width, height, scale, framebuffer.size());
                     display.send(&mut stage)?
                 }
                 Ok(Command::ClipboardText(text)) => {
@@ -667,9 +682,9 @@ struct DisplayControl {
 }
 
 impl DisplayControl {
-    fn request(&mut self, width: u32, height: u32, scale: u32, image: &DecodedImage) {
+    /// `current`: the desktop size now.
+    fn request(&mut self, width: u32, height: u32, scale: u32, current: (u32, u32)) {
         let (width, height) = MonitorLayoutEntry::adjust_display_size(width, height);
-        let current = (u32::from(image.width()), u32::from(image.height()));
         let request = (width, height, scale);
         if self.requested == Some(request) || (self.requested.is_none() && current == (width, height)) {
             return;

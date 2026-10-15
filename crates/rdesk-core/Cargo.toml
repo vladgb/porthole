@@ -9,6 +9,8 @@ rust-version.workspace = true
 [dependencies]
 ironrdp.workspace = true
 ironrdp-tokio.workspace = true
+ironrdp-egfx.workspace = true
+openh264.workspace = true
 sspi.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true

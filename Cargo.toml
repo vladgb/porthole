@@ -56,6 +56,8 @@ tokio-rustls = "0.26"
 rustls-native-certs = "0.8"
 x509-cert = { version = "0.2", features = ["std"] }
 sha2 = "0.10"
+ironrdp-egfx = "0.3"
+openh264 = { version = "0.9", default-features = false, features = ["libloading"] }
 ironrdp-rdpsnd = "0.9"
 pipewire = "0.10"
 
@@ -89,3 +91,7 @@ all = { level = "warn", priority = -1 }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Local patches to upstream crates; see vendor/README.md.
+[patch.crates-io]
+ironrdp-connector = { path = "vendor/ironrdp-connector" }

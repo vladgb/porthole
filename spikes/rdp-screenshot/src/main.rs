@@ -143,6 +143,7 @@ fn build_config(args: &Args, username: String, password: String, domain: Option<
         // Log on with the supplied credentials instead of showing the server login screen (mstsc does the same).
         autologon: true,
         enable_audio_playback: false,
+        enable_gfx: false,
         compression_type: None,
         pointer_software_rendering: true,
         multitransport_flags: None,

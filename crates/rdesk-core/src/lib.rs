@@ -21,6 +21,8 @@ mod clipboard;
 mod config;
 mod event;
 mod framebuffer;
+mod gfx;
+mod h264;
 mod session;
 mod tls;
 

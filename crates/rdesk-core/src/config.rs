@@ -32,6 +32,9 @@ pub struct SessionConfig {
     pub desktop_scale_factor: u32,
     /// Plays the session's audio here; `None`: no audio.
     pub audio: Option<AudioOutput>,
+    /// Use the Graphics Pipeline (H.264 when OpenH264 is installed, other EGFX codecs otherwise)
+    /// instead of legacy bitmap updates.
+    pub graphics_pipeline: bool,
 }
 
 impl SessionConfig {
@@ -49,6 +52,7 @@ impl SessionConfig {
             clipboard: true,
             desktop_scale_factor: 0,
             audio: None,
+            graphics_pipeline: true,
         }
     }
 }
@@ -63,6 +67,7 @@ impl fmt::Debug for SessionConfig {
             .field("desktop", &(self.desktop_width, self.desktop_height))
             .field("keyboard_layout", &format_args!("{:#06x}", self.keyboard_layout))
             .field("audio", &self.audio.is_some())
+            .field("graphics_pipeline", &self.graphics_pipeline)
             .finish_non_exhaustive()
     }
 }
