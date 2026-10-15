@@ -12,6 +12,8 @@ toml.workspace = true
 uuid.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+oo7.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

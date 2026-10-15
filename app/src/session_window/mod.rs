@@ -17,7 +17,7 @@ use rdesk_core::{
     SessionEvent, SessionHandle,
 };
 use rdesk_input::ScrollAccumulator;
-use rdesk_store::{CertificateTrust, Uuid};
+use rdesk_store::{CertificateTrust, Uuid, keyring};
 use tracing::{debug, warn};
 
 use crate::dialogs::{self, CertificateDecision};
@@ -34,6 +34,10 @@ pub struct Target {
     pub pc: Option<Uuid>,
     pub nla: bool,
     pub clipboard: bool,
+    /// Save the password in the keyring once connected (a saved PC's "Remember password").
+    pub save_password: bool,
+    /// The password came from the keyring.
+    pub password_saved: bool,
 }
 
 struct Inner {
@@ -51,6 +55,8 @@ struct Inner {
     pc: Option<Uuid>,
     nla: bool,
     clipboard: bool,
+    save_password: Cell<bool>,
+    password_saved: Cell<bool>,
     desktop: Desktop,
     credentials: RefCell<Credentials>,
 
@@ -102,6 +108,8 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         pc,
         nla,
         clipboard,
+        save_password,
+        password_saved,
     } = target;
     let title = adw::WindowTitle::new(&name, "Connecting…");
     let header = adw::HeaderBar::builder().title_widget(&title).build();
@@ -191,6 +199,8 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         pc,
         nla,
         clipboard,
+        save_password: Cell::new(save_password),
+        password_saved: Cell::new(password_saved),
         desktop,
         credentials: RefCell::new(credentials),
         session: RefCell::default(),
@@ -292,13 +302,30 @@ async fn reconnect_session(state: State) {
     cancel_auto_reconnect(&state);
     let reason = state.last_reason.borrow().clone();
     if let Some(DisconnectReason::Authentication(failure)) = reason {
-        let username = state.credentials.borrow().username.clone();
-        let Some(credentials) =
-            dialogs::ask_credentials(&state.window, &state.host, Some(&username), Some(&failure.to_string())).await
+        let username = account_name(&state.credentials.borrow());
+        let remember = state
+            .pc
+            .map(|_| state.password_saved.get() || state.save_password.get());
+        let Some(sign_in) = dialogs::ask_credentials(
+            &state.window,
+            &state.title.title(),
+            Some(&username),
+            Some(&failure.to_string()),
+            remember,
+        )
+        .await
         else {
             return;
         };
-        state.credentials.replace(credentials);
+        state.credentials.replace(sign_in.credentials);
+        state.save_password.set(sign_in.remember);
+        if !sign_in.remember
+            && state.password_saved.replace(false)
+            && let Some(id) = state.pc
+            && let Some(Err(e)) = crate::on_runtime(keyring::forget_password(id)).await
+        {
+            warn!(error = %e, "Couldn't remove the saved password");
+        }
     }
     start(&state);
 }
@@ -316,6 +343,7 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
             SessionEvent::Connected { width, height } => {
                 state.connected.set(true);
                 state.was_connected.set(true);
+                save_password(&state);
                 state.reconnect_attempts.set(0);
                 keys::connection_changed(&state);
                 if let Some(id) = state.pc
@@ -438,6 +466,45 @@ fn cancel_auto_reconnect(state: &State) {
     if let Some(timer) = state.reconnect_timer.take() {
         timer.remove();
     }
+}
+
+/// `DOMAIN\user` (or the plain user name / UPN), as typed.
+fn account_name(credentials: &Credentials) -> String {
+    match &credentials.domain {
+        Some(domain) => format!("{domain}\\{}", credentials.username),
+        None => credentials.username.clone(),
+    }
+}
+
+/// Stores the password after a successful sign-in, if the user asked to remember it.
+fn save_password(state: &State) {
+    let Some(id) = state.pc.filter(|_| state.save_password.replace(false)) else {
+        return;
+    };
+    let credentials = state.credentials.borrow();
+    let username = account_name(&credentials);
+    let password = zeroize::Zeroizing::new(credentials.password.clone());
+    let label = format!("Remote Desktop password for {}", state.title.title());
+    let weak = Rc::downgrade(state);
+    glib::spawn_future_local(async move {
+        let stored = crate::on_runtime(async move { keyring::store_password(id, &username, &label, &password).await });
+        match stored.await {
+            Some(Ok(())) => {
+                if let Some(state) = weak.upgrade() {
+                    state.password_saved.set(true);
+                }
+            }
+            Some(Err(e)) => {
+                warn!(error = %e, "Couldn't save the password");
+                if let Some(state) = weak.upgrade() {
+                    state
+                        .toasts
+                        .add_toast(adw::Toast::new("Couldn't save the password in the keyring"));
+                }
+            }
+            None => {}
+        }
+    });
 }
 
 /// Keeps a small picture of the last frame for the saved PC's tile in the main window.

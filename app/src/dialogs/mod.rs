@@ -7,13 +7,22 @@ use libadwaita as adw;
 use rdesk_core::{CertificateInfo, CertificateProblem, Credentials};
 use rdesk_store::Pc;
 
-/// Asks for a user name and password. `error` explains why we're asking again.
+/// What the sign-in dialog returns.
+pub struct SignIn {
+    pub credentials: Credentials,
+    /// "Remember password" was ticked (always false when it wasn't offered).
+    pub remember: bool,
+}
+
+/// Asks for a user name and password. `error` explains why we're asking again. `remember`
+/// offers saving the password, ticked or not; `None` doesn't offer it (e.g. quick connect).
 pub async fn ask_credentials(
     parent: &impl IsA<gtk::Widget>,
     host: &str,
     username: Option<&str>,
     error: Option<&str>,
-) -> Option<Credentials> {
+    remember: Option<bool>,
+) -> Option<SignIn> {
     let user_row = adw::EntryRow::builder()
         .title("User name")
         .activates_default(true)
@@ -31,6 +40,14 @@ pub async fn ask_credentials(
         .build();
     list.append(&user_row);
     list.append(&password_row);
+    let remember_row = remember.map(|active| {
+        let row = adw::SwitchRow::builder()
+            .title("Remember Password")
+            .active(active)
+            .build();
+        list.append(&row);
+        row
+    });
 
     let body = match error {
         Some(error) => format!("{error}\n\nEnter your credentials for {host}."),
@@ -58,7 +75,10 @@ pub async fn ask_credentials(
     }
 
     let response = dialog.choose_future(Some(parent)).await;
-    (response == "connect").then(|| Credentials::parse(user_row.text().trim(), password_row.text().as_str()))
+    (response == "connect").then(|| SignIn {
+        credentials: Credentials::parse(user_row.text().trim(), password_row.text().as_str()),
+        remember: remember_row.is_some_and(|row| row.is_active()),
+    })
 }
 
 /// What the user decided about a certificate that couldn't be verified.

@@ -39,6 +39,16 @@ pub fn config() -> Rc<Config> {
     CONFIG.with(Rc::clone)
 }
 
+/// Runs `future` on the Tokio runtime (needed by IronRDP and the keyring) and waits for it from
+/// the GTK main loop. `None` if it panicked.
+pub async fn on_runtime<F>(future: F) -> Option<F::Output>
+where
+    F: Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    runtime().spawn(future).await.ok()
+}
+
 fn open_config() -> Config {
     let (store, problem) = match rdesk_store::Store::open_default() {
         Ok(store) => {

@@ -64,6 +64,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
+oo7 = { version = "0.5", default-features = false, features = ["tokio", "native_crypto"] }
+zeroize = "1"
 tempfile = "3"
 clap = { version = "4", features = ["derive"] }
 image = { version = "0.25", default-features = false, features = ["png"] }

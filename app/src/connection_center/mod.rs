@@ -9,7 +9,8 @@ use adw::prelude::*;
 use gtk4 as gtk;
 use gtk4::{gio, glib};
 use libadwaita as adw;
-use rdesk_store::{Layout, Pc, Settings, SortOrder, Uuid};
+use rdesk_core::Credentials;
+use rdesk_store::{Layout, Pc, Settings, SortOrder, Uuid, keyring};
 
 use crate::dialogs;
 use crate::session_window::{SessionWindow, Target};
@@ -517,6 +518,10 @@ async fn remove(state: State, pc: Pc) {
         return;
     }
     let removed = crate::config().store.borrow_mut().remove_pc(pc.id);
+    let id = pc.id;
+    if let Some(Err(e)) = crate::on_runtime(keyring::forget_password(id)).await {
+        tracing::warn!(error = %e, "Couldn't remove the saved password");
+    }
     if let Err(e) = removed {
         dialogs::show_error(&state.window, "Couldn't Remove the PC", &e.to_string());
     }
@@ -545,35 +550,63 @@ pub fn launch(app: &adw::Application, launch: crate::Launch) {
 }
 
 async fn quick_connect(window: adw::ApplicationWindow, host: String, port: u16, user: Option<String>) {
-    let target = Target {
+    let mut target = Target {
         name: Pc::new(host.clone(), port).address(),
         host,
         port,
         pc: None,
         nla: true,
         clipboard: true,
+        save_password: false,
+        password_saved: false,
     };
-    open_session(window, target, user).await;
+    let Some(sign_in) = dialogs::ask_credentials(&window, &target.name, user.as_deref(), None, None).await else {
+        return;
+    };
+    target.save_password = sign_in.remember;
+    open_session(&window, target, sign_in.credentials);
 }
 
 async fn connect_saved(window: adw::ApplicationWindow, pc: Pc) {
-    let target = Target {
+    let mut target = Target {
         name: pc.display_name(),
-        host: pc.host,
+        host: pc.host.clone(),
         port: pc.port,
         pc: Some(pc.id),
         nla: pc.nla,
         clipboard: pc.clipboard,
+        save_password: false,
+        password_saved: false,
     };
-    open_session(window, target, pc.username).await;
-}
-
-async fn open_session(window: adw::ApplicationWindow, target: Target, user: Option<String>) {
-    let Some(credentials) = dialogs::ask_credentials(&window, &target.name, user.as_deref(), None).await else {
+    // A saved password connects straight away.
+    if let Some(username) = pc.username.clone() {
+        let id = pc.id;
+        let lookup = crate::on_runtime(async move {
+            let password = keyring::password(id, &username).await;
+            (username, password)
+        });
+        match lookup.await {
+            Some((username, Ok(Some(password)))) => {
+                target.password_saved = true;
+                open_session(&window, target, Credentials::parse(&username, password.as_str()));
+                return;
+            }
+            Some((_, Err(e))) => tracing::warn!(error = %e, "Couldn't read the saved password"),
+            _ => {}
+        }
+    }
+    let Some(sign_in) =
+        dialogs::ask_credentials(&window, &target.name, pc.username.as_deref(), None, Some(false)).await
+    else {
         return;
     };
+    target.save_password = sign_in.remember;
+    open_session(&window, target, sign_in.credentials);
+}
+
+fn open_session(window: &adw::ApplicationWindow, target: Target, credentials: Credentials) {
     let Some(app) = window.application().and_downcast::<adw::Application>() else {
         return;
     };
-    SessionWindow::open(&app, Some(&window), target, credentials);
+    SessionWindow::open(&app, Some(window), target, credentials);
 }

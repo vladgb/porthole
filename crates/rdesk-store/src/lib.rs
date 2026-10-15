@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 pub use uuid::Uuid;
 
+pub mod keyring;
+
 const PCS_FILE: &str = "pcs.toml";
 const CERTIFICATES_FILE: &str = "trusted-certificates.toml";
 const SETTINGS_FILE: &str = "settings.toml";
