@@ -37,8 +37,8 @@ use crate::drive::DriveBackend;
 use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEvent, SessionEvent};
 use crate::framebuffer::{Framebuffer, Rect};
 use crate::gfx::GfxOutput;
-use crate::h264;
 use crate::tls;
+use crate::{h264, kerberos};
 
 /// How long to wait for the server to close the connection after we ask it to.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
@@ -288,6 +288,15 @@ async fn establish(
     }
 
     let marker = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
+    let kerberos_config = if kerberos::wanted(config) {
+        info!("Signing in with Kerberos where possible");
+        Some(
+            connector::credssp::KerberosConfig::new(None, config.client_name.clone())
+                .map_err(|e| DisconnectReason::Internal(error_chain(&e)))?,
+        )
+    } else {
+        None
+    };
     let mut framed = TokioFramed::new_with_leftover(upgraded.stream, leftover);
     let result = within(
         limit,
@@ -296,10 +305,10 @@ async fn establish(
             marker,
             connector,
             &mut framed,
-            &mut NoNetworkClient,
+            &mut kerberos::KdcClient,
             config.host.clone().into(),
             upgraded.server_public_key,
-            None,
+            kerberos_config,
         ),
     )
     .await?
@@ -388,19 +397,6 @@ fn connector_config(config: &SessionConfig) -> connector::Config {
         timezone_info: TimezoneInfo::default(),
         alternate_shell: String::new(),
         work_dir: String::new(),
-    }
-}
-
-/// Kerberos (which needs to reach a KDC) isn't supported yet; NTLM never calls this.
-struct NoNetworkClient;
-
-impl ironrdp_tokio::NetworkClient for NoNetworkClient {
-    async fn send(
-        &mut self,
-        request: &ironrdp::connector::sspi::generator::NetworkRequest,
-    ) -> connector::ConnectorResult<Vec<u8>> {
-        warn!(url = %request.url, "Kerberos network request refused (not supported yet)");
-        Err(connector::general_err!("Kerberos is not supported yet"))
     }
 }
 

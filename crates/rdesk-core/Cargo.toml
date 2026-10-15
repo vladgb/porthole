@@ -13,6 +13,7 @@ ironrdp-egfx.workspace = true
 openh264.workspace = true
 ironrdp-cliprdr-format.workspace = true
 rustix.workspace = true
+url.workspace = true
 sspi.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true

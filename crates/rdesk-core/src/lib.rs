@@ -25,6 +25,7 @@ mod event;
 mod framebuffer;
 mod gfx;
 mod h264;
+mod kerberos;
 mod session;
 mod tls;
 

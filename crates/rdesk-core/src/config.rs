@@ -39,6 +39,9 @@ pub struct SessionConfig {
     pub shared_folders: Vec<crate::SharedFolder>,
     /// Lets the PC record from this computer's microphone; `None`: no microphone.
     pub microphone: Option<crate::Microphone>,
+    /// Sign in with Kerberos when possible (a domain account on a PC addressed by name), falling
+    /// back to NTLM. Off: always NTLM.
+    pub kerberos: bool,
 }
 
 impl SessionConfig {
@@ -59,6 +62,7 @@ impl SessionConfig {
             graphics_pipeline: true,
             shared_folders: Vec::new(),
             microphone: None,
+            kerberos: true,
         }
     }
 }
