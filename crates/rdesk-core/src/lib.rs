@@ -17,6 +17,7 @@
 //! # }
 //! ```
 
+mod audin;
 pub(crate) mod clipboard;
 mod config;
 mod drive;
@@ -27,6 +28,7 @@ mod h264;
 mod session;
 mod tls;
 
+pub use audin::{CaptureFormat, Microphone};
 pub use clipboard::{ClipboardContent, RemoteClipboard};
 pub use config::{AddressError, AudioOutput, Credentials, Security, SessionConfig, parse_address};
 pub use drive::SharedFolder;

@@ -37,6 +37,8 @@ pub struct SessionConfig {
     pub graphics_pipeline: bool,
     /// Local folders that appear on the PC as drives.
     pub shared_folders: Vec<crate::SharedFolder>,
+    /// Lets the PC record from this computer's microphone; `None`: no microphone.
+    pub microphone: Option<crate::Microphone>,
 }
 
 impl SessionConfig {
@@ -56,6 +58,7 @@ impl SessionConfig {
             audio: None,
             graphics_pipeline: true,
             shared_folders: Vec::new(),
+            microphone: None,
         }
     }
 }
@@ -72,6 +75,7 @@ impl fmt::Debug for SessionConfig {
             .field("audio", &self.audio.is_some())
             .field("graphics_pipeline", &self.graphics_pipeline)
             .field("shared_folders", &self.shared_folders)
+            .field("microphone", &self.microphone.is_some())
             .finish_non_exhaustive()
     }
 }

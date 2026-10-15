@@ -229,6 +229,11 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
         .subtitle("Play the PC's sound on this computer")
         .active(pc.is_none_or(|pc| pc.audio))
         .build();
+    let microphone_row = adw::SwitchRow::builder()
+        .title("Use Microphone")
+        .subtitle("Let the PC record from this computer's microphone")
+        .active(pc.is_some_and(|pc| pc.microphone))
+        .build();
     let nla_row = adw::SwitchRow::builder()
         .title("Network Level Authentication")
         .subtitle("Turn off only for PCs that don't support it")
@@ -256,6 +261,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     list.append(&group_row);
     list.append(&clipboard_row);
     list.append(&audio_row);
+    list.append(&microphone_row);
     let folders = SharedFolders::new(pc.map_or(&[][..], |pc| &pc.shared_folders));
     list.append(&folders.row);
     list.append(&nla_row);
@@ -315,6 +321,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     saved.nla = nla_row.is_active();
     saved.clipboard = clipboard_row.is_active();
     saved.audio = audio_row.is_active();
+    saved.microphone = microphone_row.is_active();
     saved.shared_folders = folders.paths.borrow().clone();
     saved.group = Some(group_row.text().trim().to_owned()).filter(|g| !g.is_empty());
     saved.username = Some(user_row.text().trim().to_owned()).filter(|u| !u.is_empty());

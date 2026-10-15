@@ -36,6 +36,7 @@ pub struct Target {
     pub nla: bool,
     pub clipboard: bool,
     pub audio: bool,
+    pub microphone: bool,
     pub shared_folders: Vec<std::path::PathBuf>,
     /// Save the password in the keyring once connected (a saved PC's "Remember password").
     pub save_password: bool,
@@ -59,6 +60,7 @@ struct Inner {
     nla: bool,
     clipboard: bool,
     audio: bool,
+    microphone: bool,
     shared_folders: Vec<std::path::PathBuf>,
     save_password: Cell<bool>,
     password_saved: Cell<bool>,
@@ -116,6 +118,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         nla,
         clipboard,
         audio,
+        microphone,
         shared_folders,
         save_password,
         password_saved,
@@ -209,6 +212,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         nla,
         clipboard,
         audio,
+        microphone,
         shared_folders,
         save_password: Cell::new(save_password),
         password_saved: Cell::new(password_saved),
@@ -300,6 +304,14 @@ fn start(state: &State) {
     config.desktop_scale_factor = state.desktop.scale;
     config.keyboard_layout = input::keyboard_layout();
     config.clipboard = state.clipboard;
+    if state.microphone {
+        let microphone: rdesk_core::Microphone = Arc::new(|format, sink| {
+            rdesk_audio::Capture::start(format.sample_rate, format.channels, sink)
+                .map(|capture| Box::new(capture) as Box<dyn Send>)
+                .map_err(|e| e.to_string())
+        });
+        config.microphone = Some(microphone);
+    }
     config.shared_folders = state
         .shared_folders
         .iter()

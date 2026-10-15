@@ -926,6 +926,10 @@ fn create_client_info_pdu(config: &Config, client_addr: &SocketAddr) -> rdp::Cli
         flags |= ClientInfoFlags::NO_AUDIO_PLAYBACK;
     }
 
+    if config.enable_audio_capture {
+        flags |= ClientInfoFlags::AUDIO_CAPTURE;
+    }
+
     // Advertise bulk compression support if configured
     let compression_type = if let Some(ct) = config.compression_type {
         flags |= ClientInfoFlags::COMPRESSION;

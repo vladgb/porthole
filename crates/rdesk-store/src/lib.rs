@@ -59,6 +59,9 @@ pub struct Pc {
     /// Play the PC's audio on this computer.
     #[serde(default = "yes", skip_serializing_if = "is_true")]
     pub audio: bool,
+    /// Let the PC record from this computer's microphone.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub microphone: bool,
     /// Local folders the PC can open as drives.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shared_folders: Vec<PathBuf>,
@@ -91,6 +94,7 @@ impl Pc {
             nla: true,
             clipboard: true,
             audio: true,
+            microphone: false,
             shared_folders: Vec::new(),
             last_connected: None,
         }

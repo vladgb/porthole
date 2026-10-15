@@ -1,4 +1,4 @@
-//! Remote audio playback (RDPSND) through PipeWire.
+//! Audio through PipeWire: the PC's sound (RDPSND) and the microphone (AUDIN capture).
 //!
 //! The server sends PCM in one of the formats we offer. Samples go into a short queue that a
 //! PipeWire playback stream, running on its own thread, drains in real time. The queue is capped
@@ -253,6 +253,138 @@ fn run(
     let mut params = [spa::pod::Pod::from_bytes(&format).ok_or(pw::Error::CreationFailed)?];
     stream.connect(
         spa::utils::Direction::Output,
+        None,
+        pw::stream::StreamFlags::AUTOCONNECT
+            | pw::stream::StreamFlags::MAP_BUFFERS
+            | pw::stream::StreamFlags::RT_PROCESS,
+        &mut params,
+    )?;
+
+    let _quit = quit.attach(mainloop.loop_(), {
+        let mainloop = mainloop.clone();
+        move |()| mainloop.quit()
+    });
+    let _ = ready.send(Ok(()));
+    mainloop.run();
+    Ok(())
+}
+
+/// Receives captured interleaved 16-bit little-endian samples.
+pub type CaptureSink = Box<dyn FnMut(&[u8]) + Send>;
+
+/// Records 16-bit PCM from the default PipeWire input until dropped.
+pub struct Capture {
+    quit: pw::channel::Sender<()>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl std::fmt::Debug for Capture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Capture").finish_non_exhaustive()
+    }
+}
+
+impl Capture {
+    pub fn start(rate: u32, channels: u16, sink: CaptureSink) -> Result<Self, pw::Error> {
+        let (quit, quit_rx) = pw::channel::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("rdesk-microphone".to_owned())
+            .spawn(move || {
+                if let Err(e) = run_capture(rate, channels, sink, quit_rx, &ready_tx) {
+                    let _ = ready_tx.send(Err(e));
+                }
+            })
+            .map_err(|_| pw::Error::CreationFailed)?;
+        ready_rx.recv().map_err(|_| pw::Error::CreationFailed)??;
+        debug!(rate, channels, "Microphone open");
+        Ok(Self {
+            quit,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for Capture {
+    fn drop(&mut self) {
+        let _ = self.quit.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+fn run_capture(
+    rate: u32,
+    channels: u16,
+    mut sink: CaptureSink,
+    quit: pw::channel::Receiver<()>,
+    ready: &std::sync::mpsc::Sender<Result<(), pw::Error>>,
+) -> Result<(), pw::Error> {
+    pw::init();
+    let mainloop = pw::main_loop::MainLoopRc::new(None)?;
+    let context = pw::context::ContextRc::new(&mainloop, None)?;
+    let core = context.connect_rc(None)?;
+    let mut properties = pw::properties::properties! {
+        *pw::keys::MEDIA_TYPE => "Audio",
+        *pw::keys::MEDIA_CATEGORY => "Capture",
+        *pw::keys::MEDIA_ROLE => "Communication",
+        *pw::keys::NODE_LATENCY => format!("{}/{rate}", rate / 50),
+        *pw::keys::APP_NAME => "Remote Desktop",
+    };
+    // Records from a specific input (node name or serial) instead of the default one. A sink's
+    // name records what plays on it.
+    if let Ok(target) = std::env::var("RDESK_MIC_TARGET") {
+        properties.insert("target.object", target);
+        properties.insert("stream.capture.sink", "true");
+    }
+    let stream = pw::stream::StreamBox::new(&core, "Remote Desktop microphone", properties)?;
+    let _listener = stream
+        .add_local_listener_with_user_data(())
+        .process(move |stream, _| {
+            let Some(mut buffer) = stream.dequeue_buffer() else {
+                return;
+            };
+            let datas = buffer.datas_mut();
+            let data = &mut datas[0];
+            let (offset, size) = {
+                let chunk = data.chunk();
+                (chunk.offset() as usize, chunk.size() as usize)
+            };
+            if let Some(samples) = data.data()
+                && let Some(captured) = samples.get(offset..offset + size)
+            {
+                sink(captured);
+            }
+        })
+        .register()?;
+
+    let mut info = spa::param::audio::AudioInfoRaw::new();
+    info.set_format(spa::param::audio::AudioFormat::S16LE);
+    info.set_rate(rate);
+    info.set_channels(u32::from(channels));
+    let mut position = [0; spa::param::audio::MAX_CHANNELS];
+    if channels == 1 {
+        position[0] = spa::sys::SPA_AUDIO_CHANNEL_MONO;
+    } else {
+        position[0] = spa::sys::SPA_AUDIO_CHANNEL_FL;
+        position[1] = spa::sys::SPA_AUDIO_CHANNEL_FR;
+    }
+    info.set_position(position);
+    let format = spa::pod::serialize::PodSerializer::serialize(
+        std::io::Cursor::new(Vec::new()),
+        &spa::pod::Value::Object(spa::pod::Object {
+            type_: spa::sys::SPA_TYPE_OBJECT_Format,
+            id: spa::sys::SPA_PARAM_EnumFormat,
+            properties: info.into(),
+        }),
+    )
+    .map_err(|_| pw::Error::CreationFailed)?
+    .0
+    .into_inner();
+    let mut params = [spa::pod::Pod::from_bytes(&format).ok_or(pw::Error::CreationFailed)?];
+    stream.connect(
+        spa::utils::Direction::Input,
         None,
         pw::stream::StreamFlags::AUTOCONNECT
             | pw::stream::StreamFlags::MAP_BUFFERS

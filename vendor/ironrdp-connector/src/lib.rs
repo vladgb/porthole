@@ -229,6 +229,8 @@ pub struct Config {
     /// rdesk patch: advertise the Graphics Pipeline (SUPPORT_DYN_VC_GFX_PROTOCOL). Only set it
     /// when an EGFX dynamic channel is attached.
     pub enable_gfx: bool,
+    /// rdesk patch: set INFO_AUDIOCAPTURE so the server offers microphone redirection (AUDIN).
+    pub enable_audio_capture: bool,
     pub performance_flags: PerformanceFlags,
 
     pub license_cache: Option<Arc<dyn LicenseCache>>,

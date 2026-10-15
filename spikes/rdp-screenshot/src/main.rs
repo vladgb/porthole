@@ -144,6 +144,7 @@ fn build_config(args: &Args, username: String, password: String, domain: Option<
         autologon: true,
         enable_audio_playback: false,
         enable_gfx: false,
+        enable_audio_capture: false,
         compression_type: None,
         pointer_software_rendering: true,
         multitransport_flags: None,

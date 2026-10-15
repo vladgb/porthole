@@ -18,9 +18,10 @@ use ironrdp::pdu::nego::FailureCode;
 use ironrdp::pdu::rdp::capability_sets::MajorPlatformType;
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp::rdpdr::Rdpdr;
-use ironrdp::rdpsnd::client::Rdpsnd;
+use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionError};
+use ironrdp::svc::ChannelFlags;
 use ironrdp_egfx::client::GraphicsPipelineClient;
 use ironrdp_tokio::{FramedWrite as _, TokioFramed};
 use tokio::net::TcpStream;
@@ -29,6 +30,7 @@ use tokio::time::Instant;
 use tokio_rustls::client::TlsStream;
 use tracing::{debug, error, info, trace, warn};
 
+use crate::audin;
 use crate::clipboard::{self, Clipboard, ClipboardContent};
 use crate::config::{Security, SessionConfig};
 use crate::drive::DriveBackend;
@@ -183,6 +185,8 @@ struct Channels {
     clipboard: ClipboardSignals,
     /// Fires once the server accepts dynamic resolution changes.
     display_ready: mpsc::UnboundedReceiver<()>,
+    /// Microphone packets to send.
+    microphone: Option<audin::Packets>,
 }
 
 async fn establish(
@@ -207,11 +211,16 @@ async fn establish(
         connector.attach_static_channel(CliprdrClient::new(Box::new(backend)));
         signals
     });
-    if let Some(audio) = &config.audio {
-        connector.attach_static_channel(Rdpsnd::new(audio()));
+    // Windows ties these together: audio starts only once device redirection is up, and device
+    // redirection and the microphone only work while the sound channel exists. So all of them
+    // come with the sound channel, which plays nothing when audio is off.
+    let devices = config.microphone.is_some() || !config.shared_folders.is_empty();
+    match &config.audio {
+        Some(audio) => connector.attach_static_channel(Rdpsnd::new(audio())),
+        None if devices => connector.attach_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend))),
+        None => {}
     }
-    // Device redirection carries shared folders; Windows also waits for it before starting audio.
-    if config.audio.is_some() || !config.shared_folders.is_empty() {
+    if config.audio.is_some() || devices {
         let (drives, announce) = DriveBackend::new(&config.shared_folders);
         let rdpdr = Rdpdr::new(Box::new(drives), config.client_name.clone());
         let rdpdr = if announce.is_empty() {
@@ -235,10 +244,16 @@ async fn establish(
         let output = GfxOutput::new(framebuffer.clone(), events.clone(), h264.clone());
         drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(output), Some(Box::new(h264))));
     }
+    let microphone = config.microphone.clone().map(|microphone| {
+        let (input, packets) = audin::AudioInput::new(microphone);
+        drdynvc = std::mem::take(&mut drdynvc).with_dynamic_channel(input);
+        packets
+    });
     connector.attach_static_channel(drdynvc);
     let channels = Channels {
         clipboard: clipboard_signals,
         display_ready,
+        microphone,
     };
 
     let should_upgrade = within(
@@ -363,6 +378,7 @@ fn connector_config(config: &SessionConfig) -> connector::Config {
         autologon: true,
         enable_audio_playback: config.audio.is_some(),
         enable_gfx: false,
+        enable_audio_capture: config.microphone.is_some(),
         compression_type: None,
         multitransport_flags: None,
         performance_flags: PerformanceFlags::default() | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION,
@@ -553,6 +569,7 @@ async fn active_session(
     let Channels {
         clipboard: mut clipboard_signals,
         mut display_ready,
+        mut microphone,
     } = channels;
     let mut display = DisplayControl::default();
 
@@ -606,6 +623,12 @@ async fn active_session(
             Some(()) = display_ready.recv(), if !display.ready => {
                 display.ready = true;
                 display.send(&mut stage)?
+            }
+            Some(packet) = recv_packet(&mut microphone) => {
+                let channel_id = microphone.as_ref().map_or(0, |m| m.channel_id.load(std::sync::atomic::Ordering::Relaxed));
+                let messages = ironrdp::dvc::encode_dvc_messages(channel_id, audin::Packets::messages(packet), ChannelFlags::empty())
+                    .map_err(|e| DisconnectReason::Internal(format!("microphone data: {e}")))?;
+                vec![ActiveStageOutput::ResponseFrame(stage.encode_dvc_messages(messages).map_err(protocol_error)?)]
             }
             Some(signal) = recv(&mut clipboard_signals) => {
                 let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
@@ -726,6 +749,14 @@ fn clipboard_frames(
 ) -> Result<Vec<ActiveStageOutput>, DisconnectReason> {
     let frame = stage.process_svc_processor_messages(messages).map_err(protocol_error)?;
     Ok(vec![ActiveStageOutput::ResponseFrame(frame)])
+}
+
+/// Waits for a microphone packet; never resolves without a microphone.
+async fn recv_packet(microphone: &mut Option<audin::Packets>) -> Option<Vec<u8>> {
+    match microphone {
+        Some(microphone) => microphone.receiver.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Waits for a clipboard signal; never resolves when the clipboard is off.
