@@ -59,6 +59,12 @@ pub enum DisconnectReason {
     CertificateRejected,
     #[error("{0}")]
     Authentication(AuthFailure),
+    #[error(
+        "The PC doesn't support Network Level Authentication (NLA). If you trust the network, you can turn off NLA in this PC's settings."
+    )]
+    NlaNotSupported,
+    #[error("The PC requires Network Level Authentication (NLA). Turn on NLA in this PC's settings.")]
+    NlaRequired,
     #[error("The PC and this app couldn't agree on security settings: {0}")]
     Negotiation(String),
     #[error("The connection to the PC was lost: {0}")]

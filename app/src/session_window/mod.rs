@@ -9,13 +9,28 @@ use adw::prelude::*;
 use gtk4 as gtk;
 use gtk4::{cairo, gdk, gio, glib};
 use libadwaita as adw;
-use rdesk_core::{Credentials, DisconnectReason, PointerEvent, SessionConfig, SessionEvent, SessionHandle};
+use rdesk_core::{
+    CertificateInfo, CertificateProblem, Credentials, DisconnectReason, PointerEvent, Security, SessionConfig,
+    SessionEvent, SessionHandle,
+};
 use rdesk_input::ScrollAccumulator;
+use rdesk_store::{CertificateTrust, Uuid};
 use tracing::{debug, warn};
 
-use crate::dialogs;
+use crate::dialogs::{self, CertificateDecision};
 
 pub struct SessionWindow;
+
+/// Where to connect.
+pub struct Target {
+    pub host: String,
+    pub port: u16,
+    /// Window title; the PC's display name.
+    pub name: String,
+    /// The saved PC, if connecting to one.
+    pub pc: Option<Uuid>,
+    pub nla: bool,
+}
 
 struct Inner {
     window: adw::ApplicationWindow,
@@ -29,6 +44,8 @@ struct Inner {
 
     host: String,
     port: u16,
+    pc: Option<Uuid>,
+    nla: bool,
     desktop: (u16, u16),
     credentials: RefCell<Credentials>,
 
@@ -50,20 +67,26 @@ impl SessionWindow {
     pub fn open(
         app: &adw::Application,
         parent: Option<&impl IsA<gtk::Window>>,
-        host: String,
-        port: u16,
+        target: Target,
         credentials: Credentials,
     ) {
         let desktop = desktop_size(parent.map(|p| p.upcast_ref()));
-        let state = build(app, host, port, desktop, credentials);
+        let state = build(app, target, desktop, credentials);
         state.window.maximize();
         state.window.present();
         start(&state);
     }
 }
 
-fn build(app: &adw::Application, host: String, port: u16, desktop: (u16, u16), credentials: Credentials) -> State {
-    let title = adw::WindowTitle::new(&host, "Connecting…");
+fn build(app: &adw::Application, target: Target, desktop: (u16, u16), credentials: Credentials) -> State {
+    let Target {
+        host,
+        port,
+        name,
+        pc,
+        nla,
+    } = target;
+    let title = adw::WindowTitle::new(&name, "Connecting…");
     let header = adw::HeaderBar::builder().title_widget(&title).build();
     let disconnect = gtk::Button::builder()
         .icon_name("network-offline-symbolic")
@@ -77,7 +100,7 @@ fn build(app: &adw::Application, host: String, port: u16, desktop: (u16, u16), c
     header.pack_end(&fullscreen);
 
     let connecting = adw::StatusPage::builder()
-        .title(format!("Connecting to {host}"))
+        .title(format!("Connecting to {name}"))
         .child(
             &gtk::Spinner::builder()
                 .spinning(true)
@@ -122,7 +145,7 @@ fn build(app: &adw::Application, host: String, port: u16, desktop: (u16, u16), c
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .title(&host)
+        .title(&name)
         .default_width(1280)
         .default_height(800)
         .content(&toolbar)
@@ -147,6 +170,8 @@ fn build(app: &adw::Application, host: String, port: u16, desktop: (u16, u16), c
         reconnect,
         host,
         port,
+        pc,
+        nla,
         desktop,
         credentials: RefCell::new(credentials),
         session: RefCell::default(),
@@ -214,6 +239,7 @@ fn build(app: &adw::Application, host: String, port: u16, desktop: (u16, u16), c
 fn start(state: &State) {
     let mut config = SessionConfig::new(state.host.clone(), state.credentials.borrow().clone());
     config.port = state.port;
+    config.security = if state.nla { Security::Nla } else { Security::Tls };
     (config.desktop_width, config.desktop_height) = state.desktop;
 
     let (session, events) = rdesk_core::connect(config, crate::runtime().handle());
@@ -243,11 +269,19 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
     while let Ok(event) = events.recv().await {
         match event {
             SessionEvent::CertificatePrompt(prompt) => {
-                let trusted = dialogs::ask_certificate_trust(&state.window, &prompt.certificate, &prompt.problem).await;
-                if trusted { prompt.accept() } else { prompt.reject() }
+                if check_certificate(&state, &prompt.certificate, &prompt.problem).await {
+                    prompt.accept()
+                } else {
+                    prompt.reject()
+                }
             }
             SessionEvent::Connected { width, height } => {
                 state.connected.set(true);
+                if let Some(id) = state.pc
+                    && let Err(e) = crate::config().store.borrow_mut().mark_connected(id)
+                {
+                    warn!(error = %e, "Couldn't record the connection");
+                }
                 state.title.set_subtitle(&format!("{width} × {height}"));
                 state.stack.set_visible_child_name("display");
                 state.picture.grab_focus();
@@ -262,6 +296,38 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
                 session_ended(&state, reason);
                 return;
             }
+        }
+    }
+}
+
+/// The certificate failed verification: connect if the user trusted it before, otherwise ask.
+async fn check_certificate(state: &State, certificate: &CertificateInfo, problem: &CertificateProblem) -> bool {
+    let config = crate::config();
+    let fingerprint = &certificate.sha256_fingerprint;
+    let trust = config
+        .store
+        .borrow()
+        .certificate_trust(&state.host, state.port, fingerprint);
+    if trust == CertificateTrust::Trusted {
+        debug!(host = %state.host, "Certificate trusted earlier");
+        return true;
+    }
+    let changed = trust == CertificateTrust::Changed;
+    match dialogs::ask_certificate_trust(&state.window, certificate, problem, changed).await {
+        CertificateDecision::Reject => false,
+        CertificateDecision::AcceptOnce => true,
+        CertificateDecision::AcceptAlways => {
+            let saved = config
+                .store
+                .borrow_mut()
+                .trust_certificate(&state.host, state.port, fingerprint);
+            if let Err(e) = saved {
+                warn!(error = %e, "Couldn't save the trusted certificate");
+                state
+                    .toasts
+                    .add_toast(adw::Toast::new("Couldn't remember the certificate"));
+            }
+            true
         }
     }
 }

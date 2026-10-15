@@ -10,6 +10,7 @@ use ironrdp::input::{Database, Operation};
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::geometry::InclusiveRectangle;
 use ironrdp::pdu::input::fast_path::{FastPathInputEvent, KeyboardFlags};
+use ironrdp::pdu::nego::FailureCode;
 use ironrdp::pdu::rdp::capability_sets::MajorPlatformType;
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp::session::image::DecodedImage;
@@ -152,6 +153,7 @@ async fn wait_for_disconnect(commands: &Commands) {
 
 async fn establish(config: &SessionConfig, events: &Events) -> Result<(ConnectionResult, Framed), DisconnectReason> {
     let limit = config.connect_timeout;
+    let nla = config.security == Security::Nla;
 
     let tcp = within(limit, "connecting", tcp_connect(&config.host, config.port)).await??;
     let client_addr = tcp
@@ -166,7 +168,7 @@ async fn establish(config: &SessionConfig, events: &Events) -> Result<(Connectio
         ironrdp_tokio::connect_begin(&mut framed, &mut connector),
     )
     .await?
-    .map_err(classify_connector_error)?;
+    .map_err(|e| classify_connector_error(e, nla))?;
 
     let (tcp, leftover) = framed.into_inner();
     let upgraded = within(limit, "setting up encryption", tls::upgrade(tcp, &config.host))
@@ -207,7 +209,7 @@ async fn establish(config: &SessionConfig, events: &Events) -> Result<(Connectio
         ),
     )
     .await?
-    .map_err(classify_connector_error)?;
+    .map_err(|e| classify_connector_error(e, nla))?;
 
     Ok((result, framed))
 }
@@ -306,10 +308,22 @@ impl ironrdp_tokio::NetworkClient for NoNetworkClient {
     }
 }
 
-fn classify_connector_error(e: ConnectorError) -> DisconnectReason {
-    let detail = error_chain(&e);
-    debug!(error = %detail, "Connection failed");
+/// `nla`: whether NLA was requested (the only protocol offered then, so the server can't downgrade).
+fn classify_connector_error(e: ConnectorError, nla: bool) -> DisconnectReason {
+    warn!(error = %error_chain(&e), "Connection failed");
+    // Without IronRDP's source locations, which mean nothing to users.
+    let detail = match e.kind() {
+        ConnectorErrorKind::Reason(description) => description.clone(),
+        kind => error_chain(kind),
+    };
     match e.kind() {
+        // The server picked a protocol we didn't offer: it can't do NLA.
+        ConnectorErrorKind::Reason(description) if nla && description.contains("but server selected") => {
+            DisconnectReason::NlaNotSupported
+        }
+        ConnectorErrorKind::Negotiation(failure) if failure.code() == FailureCode::HYBRID_REQUIRED_BY_SERVER => {
+            DisconnectReason::NlaRequired
+        }
         ConnectorErrorKind::Credssp(sspi_error) => DisconnectReason::Authentication(match sspi_error.nstatus {
             Some(status) => auth_failure(status, &detail),
             None => AuthFailure::Other(sspi_error.description.clone()),
@@ -557,7 +571,7 @@ where
     loop {
         let written = ironrdp_tokio::single_sequence_step_read(reader, &mut activation, &mut buf)
             .await
-            .map_err(classify_connector_error)?;
+            .map_err(|e| classify_connector_error(e, false))?;
         if written.size().is_some() {
             writer.write_all(buf.filled()).await.map_err(lost)?;
         }
@@ -616,6 +630,31 @@ mod tests {
             auth_failure(NStatusCode(0xC000_1234), "x"),
             AuthFailure::Other(_)
         ));
+    }
+
+    #[test]
+    fn explains_nla_mismatches() {
+        let downgrade = || {
+            ConnectorError::new(
+                "Initiation",
+                ConnectorErrorKind::Reason(
+                    "client advertised HYBRID | HYBRID_EX, but server selected STANDARD_RDP_SECURITY".to_owned(),
+                ),
+            )
+        };
+        assert_eq!(
+            classify_connector_error(downgrade(), true),
+            DisconnectReason::NlaNotSupported
+        );
+        assert!(matches!(
+            classify_connector_error(downgrade(), false),
+            DisconnectReason::Protocol(detail) if !detail.contains(".rs:")
+        ));
+        let required = ConnectorError::new(
+            "Initiation",
+            ConnectorErrorKind::Negotiation(FailureCode::HYBRID_REQUIRED_BY_SERVER.into()),
+        );
+        assert_eq!(classify_connector_error(required, false), DisconnectReason::NlaRequired);
     }
 
     #[test]

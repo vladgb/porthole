@@ -2,6 +2,8 @@ mod connection_center;
 mod dialogs;
 mod session_window;
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::OnceLock;
 
 use adw::prelude::*;
@@ -21,6 +23,47 @@ fn runtime() -> &'static tokio::runtime::Runtime {
             .build()
             .expect("failed to start the tokio runtime")
     })
+}
+
+/// Saved PCs and trusted certificates. GTK main thread only.
+pub struct Config {
+    pub store: RefCell<rdesk_store::Store>,
+    /// Shown once in the main window: why the saved configuration couldn't be (fully) loaded.
+    pub problem: RefCell<Option<String>>,
+}
+
+pub fn config() -> Rc<Config> {
+    thread_local! {
+        static CONFIG: Rc<Config> = Rc::new(open_config());
+    }
+    CONFIG.with(Rc::clone)
+}
+
+fn open_config() -> Config {
+    let (store, problem) = match rdesk_store::Store::open_default() {
+        Ok(store) => {
+            let problem = store.recovered().first().map(|r| {
+                let name = |p: &std::path::Path| p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+                format!(
+                    "{} couldn't be read, so it starts empty. The old file was kept as {}.",
+                    name(&r.path),
+                    name(&r.backup)
+                )
+            });
+            (store, problem)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Saved PCs unavailable");
+            (
+                rdesk_store::Store::in_memory(),
+                Some(format!("Saved PCs are unavailable: {e}. Changes won't be saved.")),
+            )
+        }
+    };
+    Config {
+        store: RefCell::new(store),
+        problem: RefCell::new(problem),
+    }
 }
 
 fn main() -> glib::ExitCode {
