@@ -2000,6 +2000,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ironrdp-cliprdr-format"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8c1d85feb9e3af4d3a17797994a29796de1dd44c51f7c3dcf72a50fa18f5ba5"
+dependencies = [
+ "ironrdp-core",
+ "png",
+]
+
+[[package]]
 name = "ironrdp-connector"
 version = "0.10.0"
 dependencies = [
@@ -3290,6 +3300,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "ironrdp",
+ "ironrdp-cliprdr-format",
  "ironrdp-egfx",
  "ironrdp-tokio",
  "openh264",

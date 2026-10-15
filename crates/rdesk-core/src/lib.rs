@@ -17,7 +17,7 @@
 //! # }
 //! ```
 
-mod clipboard;
+pub(crate) mod clipboard;
 mod config;
 mod drive;
 mod event;
@@ -27,6 +27,7 @@ mod h264;
 mod session;
 mod tls;
 
+pub use clipboard::{ClipboardContent, RemoteClipboard};
 pub use config::{AddressError, AudioOutput, Credentials, Security, SessionConfig, parse_address};
 pub use drive::SharedFolder;
 pub use event::{

@@ -155,7 +155,7 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
                 // Acknowledge, so the next update notifies again.
                 session.framebuffer().take_damage(|_| ());
             }
-            SessionEvent::Pointer(_) | SessionEvent::ClipboardText(_) => {}
+            SessionEvent::Pointer(_) | SessionEvent::Clipboard(_) => {}
             SessionEvent::Disconnected(reason) => {
                 info!(%reason, "Disconnected");
                 return Ok(if saved { 0 } else { 1 });

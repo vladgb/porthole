@@ -29,7 +29,7 @@ use tokio::time::Instant;
 use tokio_rustls::client::TlsStream;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::clipboard::{self, Clipboard};
+use crate::clipboard::{self, Clipboard, ClipboardContent};
 use crate::config::{Security, SessionConfig};
 use crate::drive::DriveBackend;
 use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEvent, SessionEvent};
@@ -46,7 +46,7 @@ enum Command {
     ReleaseAll,
     SyncLocks { caps: bool, num: bool, scroll: bool },
     Pause,
-    ClipboardText(Option<String>),
+    Clipboard(ClipboardContent),
     Resize { width: u32, height: u32, scale: u32 },
     Disconnect,
 }
@@ -84,9 +84,9 @@ impl SessionHandle {
         self.send(Command::Pause);
     }
 
-    /// Reports the local clipboard's text (`None`: it holds no text), offered to the remote PC.
-    pub fn set_clipboard_text(&self, text: Option<String>) {
-        self.send(Command::ClipboardText(text));
+    /// Reports what the local clipboard holds, offered to the remote PC.
+    pub fn set_clipboard(&self, content: ClipboardContent) {
+        self.send(Command::Clipboard(content));
     }
 
     /// Asks the remote PC to change its desktop size (device pixels) and scale (percent, 0: keep).
@@ -585,9 +585,9 @@ async fn active_session(
                     display.request(width, height, scale, framebuffer.size());
                     display.send(&mut stage)?
                 }
-                Ok(Command::ClipboardText(text)) => {
+                Ok(Command::Clipboard(content)) => {
                     let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
-                    match clipboard.set_local(text, channel) {
+                    match clipboard.set_local(content, channel) {
                         Ok(Some(messages)) => clipboard_frames(&stage, messages)?,
                         Ok(None) => Vec::new(),
                         Err(e) => {
@@ -611,8 +611,8 @@ async fn active_session(
                 let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
                 match clipboard.handle(signal, channel) {
                     Ok(outcome) => {
-                        if let Some(text) = outcome.remote_text {
-                            let _ = events.send(SessionEvent::ClipboardText(text)).await;
+                        if let Some(remote) = outcome.remote {
+                            let _ = events.send(SessionEvent::Clipboard(remote)).await;
                         }
                         match outcome.messages {
                             Some(messages) => clipboard_frames(&stage, messages)?,

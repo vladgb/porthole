@@ -75,8 +75,10 @@ struct Inner {
     closing: RefCell<Option<gio::ApplicationHoldGuard>>,
     scroll_vertical: RefCell<ScrollAccumulator>,
     scroll_horizontal: RefCell<ScrollAccumulator>,
-    /// The last text the remote PC copied, so it isn't offered back to it.
-    clipboard_from_remote: RefCell<Option<String>>,
+    /// The local clipboard holds what the remote copied (so it isn't offered back).
+    clipboard_from_remote: Cell<bool>,
+    /// We're putting the remote's copy on the clipboard; the change that follows is ours.
+    clipboard_setting: Cell<bool>,
     /// A pending dynamic resolution request, waiting for the window size to settle.
     resize_timeout: RefCell<Option<glib::SourceId>>,
     /// A session in this window got connected; transient failures after that are retried.
@@ -220,7 +222,8 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         closing: RefCell::default(),
         scroll_vertical: RefCell::default(),
         scroll_horizontal: RefCell::default(),
-        clipboard_from_remote: RefCell::default(),
+        clipboard_from_remote: Cell::new(false),
+        clipboard_setting: Cell::new(false),
         resize_timeout: RefCell::default(),
         was_connected: Cell::new(false),
         reconnect_attempts: Cell::new(0),
@@ -386,7 +389,7 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
             }
             SessionEvent::FrameReady => schedule_upload(&state),
             SessionEvent::Pointer(pointer) => set_pointer(&state, pointer),
-            SessionEvent::ClipboardText(text) => clipboard::set_remote(&state, text),
+            SessionEvent::Clipboard(remote) => clipboard::set_remote(&state, remote),
             SessionEvent::Disconnected(reason) => {
                 session_ended(&state, reason);
                 return;

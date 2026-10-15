@@ -24,8 +24,8 @@ pub enum SessionEvent {
     /// [`crate::Framebuffer::take_damage`], so it never queues up.
     FrameReady,
     Pointer(PointerEvent),
-    /// The remote PC copied text; put it on the local clipboard.
-    ClipboardText(String),
+    /// The remote PC copied something; put it on the local clipboard.
+    Clipboard(crate::RemoteClipboard),
     /// Always the last event of a session.
     Disconnected(DisconnectReason),
 }

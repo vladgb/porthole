@@ -59,6 +59,7 @@ sha2 = "0.10"
 ironrdp-egfx = "0.3"
 openh264 = { version = "0.9", default-features = false, features = ["libloading"] }
 ironrdp-rdpsnd = "0.9"
+ironrdp-cliprdr-format = "0.2"
 pipewire = "0.10"
 
 # Runtime & plumbing

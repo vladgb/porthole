@@ -13,8 +13,9 @@ use ironrdp::cliprdr::pdu::{
     FormatDataRequest, FormatDataResponse, LockDataId, OwnedFormatDataResponse,
 };
 use ironrdp::pdu::PduResult;
+use ironrdp_cliprdr_format::bitmap::{dib_to_png, dibv5_to_png, png_to_cf_dib, png_to_cf_dibv5};
 use tokio::sync::mpsc;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 /// Larger clipboard text is ignored rather than copied (protects both sides from huge transfers).
 pub(crate) const MAX_TEXT_BYTES: usize = 16 * 1024 * 1024;
@@ -93,25 +94,47 @@ impl CliprdrBackend for Backend {
     fn on_unlock(&mut self, _data_id: LockDataId) {}
 }
 
+/// What the local clipboard holds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClipboardContent {
+    pub text: Option<String>,
+    /// An image, PNG-encoded.
+    pub png: Option<Vec<u8>>,
+}
+
+impl ClipboardContent {
+    fn is_empty(&self) -> bool {
+        self.text.is_none() && self.png.is_none()
+    }
+}
+
+/// What a remote copy delivered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteClipboard {
+    Text(String),
+    /// PNG-encoded.
+    Image(Vec<u8>),
+}
+
 /// Clipboard state for one session.
 #[derive(Default)]
 pub(crate) struct Clipboard {
-    /// The local clipboard's text, as reported by the UI.
-    local: Option<String>,
-    /// What we last told the remote we have (`None`: nothing).
-    announced: Option<String>,
+    /// The local clipboard, as reported by the UI.
+    local: ClipboardContent,
+    /// What we last told the remote we have.
+    announced: ClipboardContent,
     /// The channel finished initialising; copies can be announced directly.
     ready: bool,
-    /// We asked the remote for its text.
-    awaiting_text: bool,
+    /// The format we asked the remote for.
+    awaiting: Option<ClipboardFormatId>,
 }
 
 /// What handling a signal produced.
 #[derive(Default)]
 pub(crate) struct Outcome {
     pub messages: Option<CliprdrSvcMessages<ironrdp::cliprdr::Client>>,
-    /// Text the remote copied, for the local clipboard.
-    pub remote_text: Option<String>,
+    /// What the remote copied, for the local clipboard.
+    pub remote: Option<RemoteClipboard>,
 }
 
 impl Clipboard {
@@ -127,55 +150,96 @@ impl Clipboard {
             }
             Signal::RemoteCopy(formats) => {
                 // The remote owns the clipboard now; our earlier announcement is void.
-                self.announced = None;
-                if formats.contains(&ClipboardFormatId::CF_UNICODETEXT) {
-                    self.awaiting_text = true;
-                    outcome.messages = Some(channel.initiate_paste(ClipboardFormatId::CF_UNICODETEXT)?);
-                } else {
-                    debug!(?formats, "Remote clipboard has no text");
+                self.announced = ClipboardContent::default();
+                // Text first; otherwise an image (DIBV5 keeps transparency).
+                let wanted = [
+                    ClipboardFormatId::CF_UNICODETEXT,
+                    ClipboardFormatId::CF_DIBV5,
+                    ClipboardFormatId::CF_DIB,
+                ]
+                .into_iter()
+                .find(|f| formats.contains(f));
+                match wanted {
+                    Some(format) => {
+                        self.awaiting = Some(format);
+                        outcome.messages = Some(channel.initiate_paste(format)?);
+                    }
+                    None => debug!(?formats, "Remote clipboard has nothing we can use"),
                 }
             }
             Signal::DataRequest(format) => {
-                let response = match (&self.local, format) {
-                    (Some(text), ClipboardFormatId::CF_UNICODETEXT) => {
-                        OwnedFormatDataResponse::new_unicode_string(&to_windows_text(text))
-                    }
-                    _ => {
-                        debug!(?format, "Remote asked for a format we don't have");
-                        OwnedFormatDataResponse::new_error()
-                    }
-                };
+                let response = self.local_data(format).unwrap_or_else(|| {
+                    debug!(?format, "Remote asked for a format we don't have");
+                    OwnedFormatDataResponse::new_error()
+                });
                 outcome.messages = Some(channel.submit_format_data(response)?);
             }
             Signal::DataResponse(data) => {
-                if !std::mem::take(&mut self.awaiting_text) {
+                let Some(format) = self.awaiting.take() else {
+                    return Ok(outcome);
+                };
+                let Some(data) = data else {
+                    debug!("Remote clipboard data unavailable");
+                    return Ok(outcome);
+                };
+                if data.len() > MAX_TEXT_BYTES * 4 {
+                    warn!(bytes = data.len(), "Remote clipboard data too large; ignored");
                     return Ok(outcome);
                 }
-                match data {
-                    Some(data) if data.len() > MAX_TEXT_BYTES => {
-                        warn!(bytes = data.len(), "Remote clipboard text too large; ignored");
+                outcome.remote = match format {
+                    ClipboardFormatId::CF_UNICODETEXT if data.len() <= MAX_TEXT_BYTES => {
+                        Some(RemoteClipboard::Text(from_windows_text(&data)))
                     }
-                    Some(data) => outcome.remote_text = Some(from_windows_text(&data)),
-                    None => debug!("Remote clipboard data unavailable"),
-                }
+                    ClipboardFormatId::CF_DIBV5 => image(dibv5_to_png(&data)),
+                    ClipboardFormatId::CF_DIB => image(dib_to_png(&data)),
+                    _ => None,
+                };
             }
         }
         Ok(outcome)
     }
 
-    /// The local clipboard changed (`None`: it holds no text).
+    fn local_data(&self, format: ClipboardFormatId) -> Option<OwnedFormatDataResponse> {
+        match format {
+            ClipboardFormatId::CF_UNICODETEXT => {
+                let text = self.local.text.as_ref()?;
+                Some(OwnedFormatDataResponse::new_unicode_string(&to_windows_text(text)))
+            }
+            ClipboardFormatId::CF_DIB | ClipboardFormatId::CF_DIBV5 => {
+                let png = self.local.png.as_ref()?;
+                let dib = if format == ClipboardFormatId::CF_DIBV5 {
+                    png_to_cf_dibv5(png)
+                } else {
+                    png_to_cf_dib(png)
+                };
+                match dib {
+                    Ok(dib) => Some(OwnedFormatDataResponse::new_data(dib)),
+                    Err(e) => {
+                        warn!(error = %e, "Couldn't convert the clipboard image");
+                        None
+                    }
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// The local clipboard changed.
     pub(crate) fn set_local(
         &mut self,
-        text: Option<String>,
+        mut content: ClipboardContent,
         channel: &mut CliprdrClient,
     ) -> PduResult<Option<CliprdrSvcMessages<ironrdp::cliprdr::Client>>> {
-        if text.as_ref().is_some_and(|t| t.len() > MAX_TEXT_BYTES) {
+        if content.text.as_ref().is_some_and(|t| t.len() > MAX_TEXT_BYTES) {
             warn!("Local clipboard text too large; not shared");
-            self.local = None;
-        } else {
-            self.local = text;
+            content.text = None;
         }
-        // Before the channel is ready the text goes out with the initial format list instead.
+        if content.png.as_ref().is_some_and(|p| p.len() > MAX_TEXT_BYTES * 4) {
+            warn!("Local clipboard image too large; not shared");
+            content.png = None;
+        }
+        self.local = content;
+        // Before the channel is ready the content goes out with the initial format list instead.
         if !self.ready || self.announced == self.local {
             return Ok(None);
         }
@@ -183,13 +247,30 @@ impl Clipboard {
     }
 
     fn announce(&mut self, channel: &mut CliprdrClient) -> PduResult<CliprdrSvcMessages<ironrdp::cliprdr::Client>> {
-        let formats: &[ClipboardFormat] = if self.local.is_some() {
-            &[ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]
-        } else {
-            &[]
-        };
+        let mut formats = Vec::new();
+        if self.local.text.is_some() {
+            formats.push(ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT));
+        }
+        if self.local.png.is_some() {
+            formats.push(ClipboardFormat::new(ClipboardFormatId::CF_DIBV5));
+            formats.push(ClipboardFormat::new(ClipboardFormatId::CF_DIB));
+        }
+        if self.local.is_empty() {
+            trace!("Local clipboard is empty");
+        }
+        debug!(?formats, "Offering the local clipboard");
         self.announced = self.local.clone();
-        channel.initiate_copy(formats)
+        channel.initiate_copy(&formats)
+    }
+}
+
+fn image(png: Result<Vec<u8>, ironrdp_cliprdr_format::bitmap::BitmapError>) -> Option<RemoteClipboard> {
+    match png {
+        Ok(png) => Some(RemoteClipboard::Image(png)),
+        Err(e) => {
+            warn!(error = %e, "Couldn't convert the remote clipboard image");
+            None
+        }
     }
 }
 
