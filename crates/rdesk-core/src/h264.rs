@@ -109,8 +109,54 @@ impl H264Decoder for OpenH264 {
             .ok_or_else(|| DecoderError::msg("OpenH264 returned no picture"))?;
         let (width, height) = yuv.dimensions();
         let mut rgba = vec![0; width * height * 4];
-        yuv.write_rgba8(&mut rgba);
+        let (y_stride, uv_stride, _) = yuv.strides();
+        yuv709_full_to_rgba(
+            Planes {
+                y: yuv.y(),
+                u: yuv.u(),
+                v: yuv.v(),
+                y_stride,
+                uv_stride,
+            },
+            width,
+            height,
+            &mut rgba,
+        );
         Ok(DecodedFrame::new(rgba, width as u32, height as u32))
+    }
+}
+
+struct Planes<'a> {
+    y: &'a [u8],
+    u: &'a [u8],
+    v: &'a [u8],
+    y_stride: usize,
+    uv_stride: usize,
+}
+
+/// BT.709 full-range YUV 4:2:0 → RGBA, as RDP's H.264 is encoded (MS-RDPEGFX). OpenH264's own
+/// conversion assumes BT.601 limited range, which crushes dark greys to black and oversaturates.
+fn yuv709_full_to_rgba(planes: Planes<'_>, width: usize, height: usize, rgba: &mut [u8]) {
+    // Coefficients in 16.16 fixed point.
+    const RV: i32 = 103_206; // 1.5748
+    const GU: i32 = 12_276; // 0.1873
+    const GV: i32 = 30_679; // 0.4681
+    const BU: i32 = 121_609; // 1.8556
+    const HALF: i32 = 1 << 15;
+    let clamp = |v: i32| (v >> 16).clamp(0, 255) as u8;
+    for (row, out) in rgba.chunks_exact_mut(width * 4).take(height).enumerate() {
+        let y_row = &planes.y[row * planes.y_stride..][..width];
+        let u_row = &planes.u[(row / 2) * planes.uv_stride..];
+        let v_row = &planes.v[(row / 2) * planes.uv_stride..];
+        for (x, (pixel, &luma)) in out.as_chunks_mut::<4>().0.iter_mut().zip(y_row).enumerate() {
+            let y = (i32::from(luma) << 16) + HALF;
+            let u = i32::from(u_row[x / 2]) - 128;
+            let v = i32::from(v_row[x / 2]) - 128;
+            pixel[0] = clamp(y + RV * v);
+            pixel[1] = clamp(y - GU * u - GV * v);
+            pixel[2] = clamp(y + BU * u);
+            pixel[3] = 0xFF;
+        }
     }
 }
 
@@ -130,6 +176,33 @@ fn to_annex_b(data: &[u8], out: &mut Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn converts_full_range_bt709() {
+        // Windows Terminal's #0C0C0C background and a light blue, as Windows encodes them.
+        let rgb_to_yuv = |r: f64, g: f64, b: f64| {
+            let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            let u = (b - y) / 1.8556 + 128.0;
+            let v = (r - y) / 1.5748 + 128.0;
+            (y.round() as u8, u.round() as u8, v.round() as u8)
+        };
+        for (r, g, b) in [(12, 12, 12), (142, 179, 206), (0, 0, 0), (255, 255, 255), (200, 30, 40)] {
+            let (y, u, v) = rgb_to_yuv(f64::from(r), f64::from(g), f64::from(b));
+            let mut rgba = [0; 8];
+            let planes = Planes {
+                y: &[y, y],
+                u: &[u],
+                v: &[v],
+                y_stride: 2,
+                uv_stride: 1,
+            };
+            yuv709_full_to_rgba(planes, 2, 1, &mut rgba);
+            for (got, want) in rgba[..3].iter().zip([r, g, b]) {
+                assert!(got.abs_diff(want) <= 2, "{:?} for {:?}", &rgba[..3], (r, g, b));
+            }
+            assert_eq!(rgba[3], 0xFF);
+        }
+    }
 
     #[test]
     fn converts_length_prefixed_nals() {

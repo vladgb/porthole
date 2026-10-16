@@ -58,6 +58,9 @@ struct ScreenshotArgs {
     /// primary, at 0,0). The screenshot then shows the whole multi-monitor desktop.
     #[arg(long, value_parser = parse_monitors)]
     monitors: Option<Monitors>,
+    /// Don't use the Graphics Pipeline (H.264): legacy bitmap updates only.
+    #[arg(long)]
+    no_gfx: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -115,6 +118,7 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
     if args.no_nla {
         config.security = Security::Tls;
     }
+    config.graphics_pipeline = !args.no_gfx;
 
     let (session, events) = rdesk_core::connect(config, &runtime);
     let started = Instant::now();

@@ -712,6 +712,7 @@ async fn active_session(
                     }
                 }
             }
+            () = sleep_until(display.check_at) => display.unanswered(framebuffer.size(), &mut stage)?,
             () = sleep_until(shutdown_deadline) => {
                 debug!("Server did not close the connection in time");
                 return Ok(DisconnectReason::UserRequested);
@@ -784,7 +785,12 @@ struct DisplayControl {
     seen: u64,
     /// The last request was sent again already (see `desktop_changed`).
     retried: bool,
+    /// When to ask again if the server hasn't changed the desktop by then.
+    check_at: Option<Instant>,
 }
+
+/// How long the server gets to apply a layout before it's asked once more.
+const LAYOUT_RETRY_AFTER: Duration = Duration::from_secs(2);
 
 /// Monitors (the first is the primary, at 0,0) and the scale in percent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -840,6 +846,26 @@ impl DisplayControl {
             return Ok(Vec::new());
         }
         self.seen = generation;
+        self.check_at = None;
+        self.retry_if_unmatched(current, stage)
+    }
+
+    /// The server ignored the request: without the Graphics Pipeline, Windows drops one that
+    /// arrives right after the session starts, and nothing else would notice.
+    fn unanswered(
+        &mut self,
+        current: (u32, u32),
+        stage: &mut ActiveStage,
+    ) -> Result<Vec<ActiveStageOutput>, DisconnectReason> {
+        self.check_at = None;
+        self.retry_if_unmatched(current, stage)
+    }
+
+    fn retry_if_unmatched(
+        &mut self,
+        current: (u32, u32),
+        stage: &mut ActiveStage,
+    ) -> Result<Vec<ActiveStageOutput>, DisconnectReason> {
         match &self.requested {
             Some(request) if request.bounds() != current && !self.retried => {
                 debug!(
@@ -873,6 +899,7 @@ impl DisplayControl {
         match frame {
             Some(frame) => {
                 self.requested = Some(layout);
+                self.check_at = (!self.retried).then(|| Instant::now() + LAYOUT_RETRY_AFTER);
                 Ok(vec![ActiveStageOutput::ResponseFrame(frame.map_err(protocol_error)?)])
             }
             None => Ok(Vec::new()),

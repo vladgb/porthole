@@ -41,6 +41,8 @@ pub struct Target {
     pub audio: bool,
     pub microphone: bool,
     pub all_monitors: bool,
+    /// Lossless picture instead of H.264.
+    pub best_quality: bool,
     pub shared_folders: Vec<std::path::PathBuf>,
     /// Save the password in the keyring once connected (a saved PC's "Remember password").
     pub save_password: bool,
@@ -70,6 +72,7 @@ struct Inner {
     audio: bool,
     microphone: bool,
     all_monitors: bool,
+    best_quality: bool,
     /// Full screen over every monitor is active (see `monitors`).
     spanning: Cell<bool>,
     /// The part of the desktop the session window shows while spanning (`None`: all of it).
@@ -136,6 +139,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         audio,
         microphone,
         all_monitors,
+        best_quality,
         shared_folders,
         save_password,
         password_saved,
@@ -237,6 +241,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         audio,
         microphone,
         all_monitors,
+        best_quality,
         spanning: Cell::new(false),
         main_area: Cell::new(None),
         extra_views: RefCell::default(),
@@ -334,6 +339,7 @@ fn start(state: &State) {
     config.desktop_scale_factor = state.desktop.scale;
     config.keyboard_layout = input::keyboard_layout();
     config.clipboard = state.clipboard;
+    config.graphics_pipeline = !state.best_quality;
     if state.microphone {
         let microphone: rdesk_core::Microphone = Arc::new(|format, sink| {
             rdesk_audio::Capture::start(format.sample_rate, format.channels, sink)

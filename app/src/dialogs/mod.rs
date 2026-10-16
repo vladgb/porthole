@@ -234,6 +234,12 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
         .subtitle("In full screen, spread the PC's desktop over every monitor")
         .active(pc.is_some_and(|pc| pc.all_monitors))
         .build();
+    let quality_row = adw::ComboRow::builder()
+        .title("Picture Quality")
+        .subtitle("Best: sharper text and exact colours, but needs a fast network")
+        .model(&gtk::StringList::new(&["Balanced", "Best"]))
+        .selected(u32::from(pc.is_some_and(|pc| pc.best_quality)))
+        .build();
     let microphone_row = adw::SwitchRow::builder()
         .title("Use Microphone")
         .subtitle("Let the PC record from this computer's microphone")
@@ -268,6 +274,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     list.append(&audio_row);
     list.append(&microphone_row);
     list.append(&monitors_row);
+    list.append(&quality_row);
     let folders = SharedFolders::new(pc.map_or(&[][..], |pc| &pc.shared_folders));
     list.append(&folders.row);
     list.append(&nla_row);
@@ -329,6 +336,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     saved.audio = audio_row.is_active();
     saved.microphone = microphone_row.is_active();
     saved.all_monitors = monitors_row.is_active();
+    saved.best_quality = quality_row.selected() == 1;
     saved.shared_folders = folders.paths.borrow().clone();
     saved.group = Some(group_row.text().trim().to_owned()).filter(|g| !g.is_empty());
     saved.username = Some(user_row.text().trim().to_owned()).filter(|u| !u.is_empty());

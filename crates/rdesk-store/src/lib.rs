@@ -65,6 +65,10 @@ pub struct Pc {
     /// In full screen, use every local monitor.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_monitors: bool,
+    /// Lossless picture (sharp text, exact colours) instead of H.264 video, at the cost of
+    /// bandwidth and smoothness.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub best_quality: bool,
     /// Local folders the PC can open as drives.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shared_folders: Vec<PathBuf>,
@@ -99,6 +103,7 @@ impl Pc {
             audio: true,
             microphone: false,
             all_monitors: false,
+            best_quality: false,
             shared_folders: Vec::new(),
             last_connected: None,
         }
