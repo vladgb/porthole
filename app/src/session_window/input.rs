@@ -8,9 +8,52 @@ use rdesk_input::{Key, ScrollUnit};
 use tracing::{debug, warn};
 
 use super::State;
+use super::monitors::ExtraView;
 
 pub(super) fn attach(state: &State) {
-    // Capture phase on the window, so window shortcuts (F10, Tab focus moves…) go to the remote PC.
+    state.window.add_controller(key_controller(state));
+
+    // Keys held while focus leaves would otherwise stay pressed on the remote side.
+    let weak = std::rc::Rc::downgrade(state);
+    state.window.connect_is_active_notify(move |window| {
+        let Some(state) = weak.upgrade() else { return };
+        if !state.connected.get() {
+            return;
+        }
+        if window.is_active() {
+            synchronize_locks(&state);
+        } else if let Some(session) = state.session.borrow().as_ref() {
+            session.release_all();
+        }
+    });
+
+    attach_pointer(state, &state.picture, View::Main);
+}
+
+/// Input for a window on another monitor (see `monitors`).
+pub(super) fn attach_extra(state: &State, view: &std::rc::Rc<ExtraView>) {
+    view.window.add_controller(key_controller(state));
+    let weak = std::rc::Rc::downgrade(state);
+    view.window.connect_is_active_notify(move |window| {
+        if !window.is_active()
+            && let Some(state) = weak.upgrade()
+            && let Some(session) = state.session.borrow().as_ref()
+        {
+            session.release_all();
+        }
+    });
+    attach_pointer(state, &view.picture, View::Extra(std::rc::Rc::downgrade(view)));
+}
+
+/// Which window's picture a pointer event is for.
+#[derive(Clone)]
+enum View {
+    Main,
+    Extra(std::rc::Weak<ExtraView>),
+}
+
+/// Capture phase, so window shortcuts (F10, Tab focus moves…) go to the remote PC.
+fn key_controller(state: &State) -> gtk::EventControllerKey {
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let weak = std::rc::Rc::downgrade(state);
@@ -41,32 +84,21 @@ pub(super) fn attach(state: &State) {
             send_key(&state, keycode, false);
         }
     });
-    state.window.add_controller(keys);
+    keys
+}
 
-    // Keys held while focus leaves would otherwise stay pressed on the remote side.
-    let weak = std::rc::Rc::downgrade(state);
-    state.window.connect_is_active_notify(move |window| {
-        let Some(state) = weak.upgrade() else { return };
-        if !state.connected.get() {
-            return;
-        }
-        if window.is_active() {
-            synchronize_locks(&state);
-        } else if let Some(session) = state.session.borrow().as_ref() {
-            session.release_all();
-        }
-    });
-
+fn attach_pointer(state: &State, picture: &gtk::Picture, view: View) {
     let motion = gtk::EventControllerMotion::new();
     let weak = std::rc::Rc::downgrade(state);
+    let motion_view = view.clone();
     motion.connect_motion(move |_, x, y| {
         if let Some(state) = weak.upgrade()
-            && let Some(position) = to_remote(&state, x, y)
+            && let Some(position) = to_remote(&state, &motion_view, x, y)
         {
             send(&state, [Operation::MouseMove(position)]);
         }
     });
-    state.picture.add_controller(motion);
+    picture.add_controller(motion);
 
     // Raw button events: GestureClick tracks one button at a time, but chords (e.g. left+right) must work.
     let buttons = gtk::EventControllerLegacy::new();
@@ -100,7 +132,7 @@ pub(super) fn attach(state: &State) {
         );
         glib::Propagation::Stop
     });
-    state.picture.add_controller(buttons);
+    picture.add_controller(buttons);
 
     let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
     let weak = std::rc::Rc::downgrade(state);
@@ -136,7 +168,7 @@ pub(super) fn attach(state: &State) {
             state.scroll_horizontal.borrow_mut().reset();
         }
     });
-    state.picture.add_controller(scroll);
+    picture.add_controller(scroll);
 }
 
 pub(super) fn synchronize_locks(state: &State) {
@@ -220,12 +252,27 @@ fn send_key(state: &State, keycode: u32, pressed: bool) {
 }
 
 /// Maps a point in the picture to remote desktop pixels, accounting for the letterboxed scaling.
-fn to_remote(state: &State, x: f64, y: f64) -> Option<MousePosition> {
-    let texture = state.texture.borrow();
-    let texture = texture.as_ref()?;
+/// Maps a point in a view's picture to remote desktop pixels.
+fn to_remote(state: &State, view: &View, x: f64, y: f64) -> Option<MousePosition> {
+    let (picture, texture, origin) = match view {
+        View::Main => (
+            state.picture.clone(),
+            state.texture.borrow().clone()?,
+            state.main_area.get().map_or((0, 0), |a| (a.x, a.y)),
+        ),
+        View::Extra(view) => {
+            let view = view.upgrade()?;
+            let texture = view.texture.borrow().clone()?;
+            (view.picture.clone(), texture, (view.area.x, view.area.y))
+        }
+    };
     let (tw, th) = (f64::from(texture.width()), f64::from(texture.height()));
-    let (ww, wh) = (f64::from(state.picture.width()), f64::from(state.picture.height()));
-    map_point(x, y, (ww, wh), (tw, th))
+    let (ww, wh) = (f64::from(picture.width()), f64::from(picture.height()));
+    let point = map_point(x, y, (ww, wh), (tw, th))?;
+    Some(MousePosition {
+        x: point.x.saturating_add(u16::try_from(origin.0).unwrap_or(u16::MAX)),
+        y: point.y.saturating_add(u16::try_from(origin.1).unwrap_or(u16::MAX)),
+    })
 }
 
 fn map_point(x: f64, y: f64, widget: (f64, f64), remote: (f64, f64)) -> Option<MousePosition> {

@@ -3,6 +3,7 @@
 mod clipboard;
 mod input;
 mod keys;
+mod monitors;
 mod remote_files;
 mod resize;
 
@@ -38,6 +39,7 @@ pub struct Target {
     pub clipboard: bool,
     pub audio: bool,
     pub microphone: bool,
+    pub all_monitors: bool,
     pub shared_folders: Vec<std::path::PathBuf>,
     /// Save the password in the keyring once connected (a saved PC's "Remember password").
     pub save_password: bool,
@@ -62,6 +64,14 @@ struct Inner {
     clipboard: bool,
     audio: bool,
     microphone: bool,
+    all_monitors: bool,
+    /// Full screen over every monitor is active (see `monitors`).
+    spanning: Cell<bool>,
+    /// The part of the desktop the session window shows while spanning (`None`: all of it).
+    main_area: Cell<Option<monitors::Area>>,
+    extra_views: RefCell<Vec<Rc<monitors::ExtraView>>>,
+    /// The monitors asked for while spanning, and the scale.
+    span_layout: RefCell<Option<(Vec<rdesk_core::MonitorRect>, u32)>>,
     shared_folders: Vec<std::path::PathBuf>,
     save_password: Cell<bool>,
     password_saved: Cell<bool>,
@@ -120,6 +130,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         clipboard,
         audio,
         microphone,
+        all_monitors,
         shared_folders,
         save_password,
         password_saved,
@@ -214,6 +225,11 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         clipboard,
         audio,
         microphone,
+        all_monitors,
+        spanning: Cell::new(false),
+        main_area: Cell::new(None),
+        extra_views: RefCell::default(),
+        span_layout: RefCell::default(),
         shared_folders,
         save_password: Cell::new(save_password),
         password_saved: Cell::new(password_saved),
@@ -246,6 +262,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         state.window,
         move |_| window.fullscreen()
     ));
+    let weak_fullscreen = Rc::downgrade(&state);
     state.window.connect_fullscreened_notify(glib::clone!(
         #[weak(rename_to = toolbar)]
         state.toolbar,
@@ -254,6 +271,9 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         move |window| {
             let fullscreen = window.is_fullscreen();
             toolbar.set_reveal_top_bars(!fullscreen);
+            if let Some(state) = weak_fullscreen.upgrade() {
+                monitors::fullscreen_changed(&state);
+            }
             if fullscreen {
                 toasts.add_toast(adw::Toast::new("Press Ctrl+Alt+Enter to leave full screen"));
             }
@@ -396,6 +416,7 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
                 input::synchronize_locks(&state);
                 clipboard::share_local(&state);
                 resize::schedule(&state);
+                monitors::send_layout(&state);
             }
             SessionEvent::DesktopResized { width, height } => {
                 state.title.set_subtitle(&format!("{width} × {height}"));
@@ -581,6 +602,7 @@ fn session_ended(state: &State, reason: DisconnectReason) {
     keys::connection_changed(state);
     state.session.replace(None);
     state.picture.set_cursor(None);
+    monitors::leave(state);
     if state.closing.take().is_some() || reason == DisconnectReason::UserRequested {
         state.window.destroy();
         return;
@@ -625,46 +647,128 @@ fn upload(state: &State) {
     let Some(session) = session.as_ref() else {
         return;
     };
+    let main_area = state.main_area.get();
+    let extras = state.extra_views.borrow().clone();
     let previous = state.texture.borrow().clone();
-    let texture = session.framebuffer().take_damage(|damage| {
+    let textures = session.framebuffer().take_damage(|damage| {
         if damage.width == 0 || damage.height == 0 {
             return None;
         }
-        let (width, height) = (damage.width as i32, damage.height as i32);
-        // GdkMemoryTexture keeps a reference to its bytes, so every texture needs its own copy.
+        // GdkMemoryTexture keeps a reference to its bytes, so every frame needs its own copy;
+        // the views share it.
         let bytes = glib::Bytes::from(damage.data);
-        let mut builder = gdk::MemoryTextureBuilder::new()
-            .set_bytes(Some(&bytes))
-            .set_width(width)
-            .set_height(height)
-            .set_stride(damage.stride)
-            .set_format(gdk::MemoryFormat::B8g8r8x8);
-        if !damage.full
-            && let Some(previous) = &previous
-            && previous.width() == width
-            && previous.height() == height
-        {
-            let rects: Vec<_> = damage
-                .rects
-                .iter()
-                .map(|r| cairo::RectangleInt::new(r.x as i32, r.y as i32, r.width as i32, r.height as i32))
-                .collect();
-            builder = builder
-                .set_update_texture(Some(previous))
-                .set_update_region(Some(&cairo::Region::create_rectangles(&rects)));
-        }
-        Some(builder.build())
+        let main = view_texture(&damage, &bytes, main_area, previous.as_ref());
+        let extra: Vec<_> = extras
+            .iter()
+            .map(|view| view_texture(&damage, &bytes, Some(view.area), view.texture.borrow().as_ref()))
+            .collect();
+        Some((main, extra))
     });
-    if let Some(texture) = texture {
+    let Some((main, extra)) = textures else { return };
+    if let Some(texture) = main {
         state.picture.set_paintable(Some(&texture));
         state.texture.replace(Some(texture));
     }
+    for (view, texture) in extras.iter().zip(extra) {
+        if let Some(texture) = texture {
+            view.picture.set_paintable(Some(&texture));
+            view.texture.replace(Some(texture));
+        }
+    }
+    debug_dump_views(state);
+}
+
+/// For tests on headless displays: `RDESK_DEBUG_VIEWS_DIR` gets each window's picture as
+/// `view-N.png` (N = 0 for the session window).
+fn debug_dump_views(state: &State) {
+    let Some(dir) = std::env::var_os("RDESK_DEBUG_VIEWS_DIR") else {
+        return;
+    };
+    let dir = std::path::PathBuf::from(dir);
+    let mut textures = vec![state.texture.borrow().clone()];
+    textures.extend(state.extra_views.borrow().iter().map(|v| v.texture.borrow().clone()));
+    for (i, texture) in textures.into_iter().enumerate() {
+        if let Some(texture) = texture {
+            let _ = texture.save_to_png(dir.join(format!("view-{i}.png")));
+        }
+    }
+}
+
+/// The texture for the part of the desktop a view shows (`None`: all of it). Shares the frame's
+/// bytes; only the changed parts are uploaded when the view's previous texture is reusable.
+/// `None` when the view has nothing new.
+fn view_texture(
+    damage: &rdesk_core::Damage<'_>,
+    bytes: &glib::Bytes,
+    area: Option<monitors::Area>,
+    previous: Option<&gdk::Texture>,
+) -> Option<gdk::Texture> {
+    let area = area.unwrap_or(monitors::Area {
+        x: 0,
+        y: 0,
+        width: damage.width,
+        height: damage.height,
+    });
+    // The server may not (yet) have the layout the view expects.
+    let width = area.width.min(damage.width.saturating_sub(area.x));
+    let height = area.height.min(damage.height.saturating_sub(area.y));
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let offset = area.y as usize * damage.stride + area.x as usize * 4;
+    let len = (height as usize - 1) * damage.stride + width as usize * 4;
+    let slice = glib::Bytes::from_bytes(bytes, offset..offset + len);
+    let mut builder = gdk::MemoryTextureBuilder::new()
+        .set_bytes(Some(&slice))
+        .set_width(width as i32)
+        .set_height(height as i32)
+        .set_stride(damage.stride)
+        .set_format(gdk::MemoryFormat::B8g8r8x8);
+    if !damage.full
+        && let Some(previous) = previous
+        && previous.width() == width as i32
+        && previous.height() == height as i32
+    {
+        let rects: Vec<_> = damage
+            .rects
+            .iter()
+            .filter_map(|r| {
+                let x0 = r.x.max(area.x);
+                let y0 = r.y.max(area.y);
+                let x1 = (r.x + r.width).min(area.x + width);
+                let y1 = (r.y + r.height).min(area.y + height);
+                (x0 < x1 && y0 < y1).then(|| {
+                    cairo::RectangleInt::new(
+                        (x0 - area.x) as i32,
+                        (y0 - area.y) as i32,
+                        (x1 - x0) as i32,
+                        (y1 - y0) as i32,
+                    )
+                })
+            })
+            .collect();
+        if rects.is_empty() {
+            return None;
+        }
+        builder = builder
+            .set_update_texture(Some(previous))
+            .set_update_region(Some(&cairo::Region::create_rectangles(&rects)));
+    }
+    Some(builder.build())
+}
+
+/// Repaints every view from scratch, e.g. after they were rearranged.
+fn refresh_views(state: &State) {
+    if let Some(session) = state.session.borrow().as_ref() {
+        session.framebuffer().mark_full_damage();
+    }
+    schedule_upload(state);
 }
 
 fn set_pointer(state: &State, pointer: PointerEvent) {
     match pointer {
-        PointerEvent::Default => state.picture.set_cursor_from_name(Some("default")),
-        PointerEvent::Hidden => state.picture.set_cursor_from_name(Some("none")),
+        PointerEvent::Default => set_cursor(state, gdk::Cursor::from_name("default", None).as_ref()),
+        PointerEvent::Hidden => set_cursor(state, gdk::Cursor::from_name("none", None).as_ref()),
         // Wayland doesn't let clients warp the pointer.
         PointerEvent::Position { .. } => {}
         PointerEvent::Bitmap(bitmap) => {
@@ -682,8 +786,15 @@ fn set_pointer(state: &State, pointer: PointerEvent) {
             let texture = gdk::MemoryTexture::new(w as i32, h as i32, gdk::MemoryFormat::R8g8b8a8, &bytes, w * 4);
             let cursor =
                 gdk::Cursor::from_texture(&texture, i32::from(bitmap.hotspot_x), i32::from(bitmap.hotspot_y), None);
-            state.picture.set_cursor(Some(&cursor));
+            set_cursor(state, Some(&cursor));
         }
+    }
+}
+
+fn set_cursor(state: &State, cursor: Option<&gdk::Cursor>) {
+    state.picture.set_cursor(cursor);
+    for view in state.extra_views.borrow().iter() {
+        view.picture.set_cursor(cursor);
     }
 }
 

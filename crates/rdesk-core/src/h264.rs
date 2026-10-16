@@ -4,7 +4,7 @@
 //! distributions pass on through their own packages (or the Flatpak OpenH264 extension).
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
 
 use ironrdp_egfx::decode::{DecodedFrame, DecoderError, DecoderResult, H264Decoder};
 use openh264::OpenH264API;
@@ -24,50 +24,46 @@ const SEARCH_DIRS: &[&str] = &[
 ];
 const NAMES: &[&str] = &["libopenh264.so.8", "libopenh264.so.7", "libopenh264.so"];
 
-/// One H.264 stream decoder shared by IronRDP's AVC420 path and our AVC444 one: both carry the
-/// same encoder's pictures, so they must go through the same decoder.
-#[derive(Clone)]
-pub(crate) struct SharedDecoder(Arc<Mutex<Box<dyn H264Decoder>>>);
-
-impl SharedDecoder {
-    pub(crate) fn new(decoder: Box<dyn H264Decoder>) -> Self {
-        Self(Arc::new(Mutex::new(decoder)))
-    }
-}
-
-impl H264Decoder for SharedDecoder {
-    fn decode(&mut self, data: &[u8]) -> DecoderResult<DecodedFrame> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).decode(data)
-    }
-
-    fn reset(&mut self) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).reset();
-    }
-}
-
-/// Loads OpenH264 if it's installed. `None`: the session falls back to other codecs.
+/// A new decoder (one per H.264 stream), if OpenH264 is installed. `None`: the session falls
+/// back to other codecs.
 pub(crate) fn decoder() -> Option<Box<dyn H264Decoder>> {
+    // The library is looked for (and its hash checked) once.
+    static LIBRARY: OnceLock<Option<PathBuf>> = OnceLock::new();
+    if let Some(Some(path)) = LIBRARY.get() {
+        return load(path).ok().and_then(|api| start(path, api));
+    }
     for path in SEARCH_DIRS
         .iter()
         .flat_map(|dir| NAMES.iter().map(move |name| Path::new(dir).join(name)))
         .filter(|path| path.exists())
     {
         match load(&path) {
-            Ok(api) => match Decoder::with_api_config(api, DecoderConfig::default()) {
-                Ok(decoder) => {
+            Ok(api) => {
+                if let Some(decoder) = start(&path, api) {
                     info!(library = %path.display(), "H.264 decoding available");
-                    return Some(Box::new(OpenH264 {
-                        decoder,
-                        annex_b: Vec::new(),
-                    }));
+                    let _ = LIBRARY.set(Some(path));
+                    return Some(decoder);
                 }
-                Err(e) => warn!(library = %path.display(), error = %e, "OpenH264 decoder failed to start"),
-            },
+            }
             Err(reason) => trace!(library = %path.display(), %reason, "OpenH264 not loaded"),
         }
     }
     info!("OpenH264 not found; H.264 is off");
+    let _ = LIBRARY.set(None);
     None
+}
+
+fn start(path: &Path, api: OpenH264API) -> Option<Box<dyn H264Decoder>> {
+    match Decoder::with_api_config(api, DecoderConfig::default()) {
+        Ok(decoder) => Some(Box::new(OpenH264 {
+            decoder,
+            annex_b: Vec::new(),
+        })),
+        Err(e) => {
+            warn!(library = %path.display(), error = %e, "OpenH264 decoder failed to start");
+            None
+        }
+    }
 }
 
 fn load(path: &Path) -> Result<OpenH264API, String> {

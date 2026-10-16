@@ -84,6 +84,15 @@ impl fmt::Debug for SessionConfig {
     }
 }
 
+/// A monitor of the remote desktop, in device pixels relative to the primary monitor's top-left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MonitorRect {
+    pub left: i32,
+    pub top: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Security {
     /// Network Level Authentication (CredSSP over TLS). Credentials are checked before a session is created.

@@ -13,7 +13,7 @@ use ironrdp::graphics::progressive::ProgressiveDecoder;
 use ironrdp::graphics::rdp6::BitmapStreamDecoder;
 use ironrdp::pdu::geometry::{ExclusiveRectangle, Rectangle as _};
 use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineHandler, Surface as SurfaceInfo};
-use ironrdp_egfx::decode::H264Decoder as _;
+use ironrdp_egfx::decode::H264Decoder;
 use ironrdp_egfx::pdu::{
     Avc444BitmapStream, CapabilitiesV10Flags, CapabilitiesV107Flags, Encoding, MapSurfaceToScaledOutputPdu,
 };
@@ -25,7 +25,7 @@ use tracing::{debug, info, trace, warn};
 
 use crate::event::SessionEvent;
 use crate::framebuffer::{Framebuffer, Rect};
-use crate::h264::SharedDecoder;
+use crate::h264;
 
 #[derive(Debug)]
 struct Surface {
@@ -48,8 +48,9 @@ struct Cached {
 pub(crate) struct GfxOutput {
     framebuffer: Framebuffer,
     events: async_channel::Sender<SessionEvent>,
-    /// Shared with IronRDP's AVC420 path; used here for AVC444.
-    h264: SharedDecoder,
+    /// AVC444 decoders: Windows encodes each surface (one per monitor) as its own H.264 stream.
+    /// (AVC420 is decoded by IronRDP, with one decoder.)
+    h264: HashMap<u16, Box<dyn H264Decoder>>,
     width: u32,
     height: u32,
     /// The composited desktop, BGRX.
@@ -64,15 +65,11 @@ pub(crate) struct GfxOutput {
 }
 
 impl GfxOutput {
-    pub(crate) fn new(
-        framebuffer: Framebuffer,
-        events: async_channel::Sender<SessionEvent>,
-        h264: SharedDecoder,
-    ) -> Self {
+    pub(crate) fn new(framebuffer: Framebuffer, events: async_channel::Sender<SessionEvent>) -> Self {
         Self {
             framebuffer,
             events,
-            h264,
+            h264: HashMap::new(),
             width: 0,
             height: 0,
             desktop: Vec::new(),
@@ -210,7 +207,13 @@ impl GfxOutput {
         if stream.encoding == Encoding::CHROMA {
             return Ok(false);
         }
-        let frame = self.h264.decode(stream.stream1.data).map_err(|e| e.to_string())?;
+        let decoder = match self.h264.entry(pdu.surface_id) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(h264::decoder().ok_or("OpenH264 isn't available")?)
+            }
+        };
+        let frame = decoder.decode(stream.stream1.data).map_err(|e| e.to_string())?;
         let rect = &pdu.destination_rectangle;
         let (width, height) = (usize::from(rect.width()), usize::from(rect.height()));
         let frame_width = frame.width() as usize;
@@ -301,6 +304,8 @@ impl GraphicsPipelineHandler for GfxOutput {
     }
 
     fn on_surface_created(&mut self, surface: &SurfaceInfo) {
+        // A new surface starts a new H.264 stream.
+        self.h264.remove(&surface.id);
         let (width, height) = (u32::from(surface.width), u32::from(surface.height));
         self.surfaces.insert(
             surface.id,
@@ -315,6 +320,7 @@ impl GraphicsPipelineHandler for GfxOutput {
 
     fn on_surface_deleted(&mut self, surface_id: u16) {
         self.surfaces.remove(&surface_id);
+        self.h264.remove(&surface_id);
     }
 
     fn on_surface_mapped(&mut self, surface_id: u16, origin_x: u32, origin_y: u32) {
@@ -433,20 +439,11 @@ impl GraphicsPipelineHandler for GfxOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ironrdp_egfx::decode::{DecodedFrame, DecoderError, DecoderResult, H264Decoder};
     use ironrdp_egfx::pdu::{Color, Point};
-
-    struct NoH264;
-
-    impl H264Decoder for NoH264 {
-        fn decode(&mut self, _data: &[u8]) -> DecoderResult<DecodedFrame> {
-            Err(DecoderError::msg("not in tests"))
-        }
-    }
 
     fn output() -> GfxOutput {
         let (events, _) = async_channel::unbounded();
-        let mut gfx = GfxOutput::new(Framebuffer::default(), events, SharedDecoder::new(Box::new(NoH264)));
+        let mut gfx = GfxOutput::new(Framebuffer::default(), events);
         gfx.on_reset_graphics(8, 4);
         gfx.surfaces.insert(
             1,

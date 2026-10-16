@@ -62,6 +62,9 @@ pub struct Pc {
     /// Let the PC record from this computer's microphone.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub microphone: bool,
+    /// In full screen, use every local monitor.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_monitors: bool,
     /// Local folders the PC can open as drives.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shared_folders: Vec<PathBuf>,
@@ -95,6 +98,7 @@ impl Pc {
             clipboard: true,
             audio: true,
             microphone: false,
+            all_monitors: false,
             shared_folders: Vec::new(),
             last_connected: None,
         }

@@ -7,7 +7,7 @@ use ironrdp::connector::sspi::credssp::NStatusCode;
 use ironrdp::connector::{self, ClientConnector, ConnectionResult, ConnectorError, ConnectorErrorKind};
 use ironrdp::core::WriteBuf;
 use ironrdp::displaycontrol::client::DisplayControlClient;
-use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
+use ironrdp::displaycontrol::pdu::{DisplayControlMonitorLayout, DisplayControlPdu, MonitorLayoutEntry};
 use ironrdp::dvc::DrdynvcClient;
 use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::input::{Database, Operation};
@@ -20,7 +20,9 @@ use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp::rdpdr::Rdpdr;
 use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
 use ironrdp::session::image::DecodedImage;
-use ironrdp::session::{ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionError};
+use ironrdp::session::{
+    ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionError, SessionErrorExt as _,
+};
 use ironrdp::svc::ChannelFlags;
 use ironrdp_egfx::client::GraphicsPipelineClient;
 use ironrdp_tokio::{FramedWrite as _, TokioFramed};
@@ -33,7 +35,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::audin;
 use crate::clipboard::{self, Clipboard, ClipboardContent};
 use crate::clipboard_files::FetchResult;
-use crate::config::{Security, SessionConfig};
+use crate::config::{MonitorRect, Security, SessionConfig};
 use crate::drive::DriveBackend;
 use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEvent, SessionEvent};
 use crate::framebuffer::{Framebuffer, Rect};
@@ -58,9 +60,8 @@ enum Command {
         dir: std::path::PathBuf,
         reply: oneshot::Sender<FetchResult>,
     },
-    Resize {
-        width: u32,
-        height: u32,
+    Layout {
+        monitors: Vec<MonitorRect>,
         scale: u32,
     },
     Disconnect,
@@ -122,7 +123,21 @@ impl SessionHandle {
     /// Takes effect once the display control channel is up; a `DesktopResized` event follows.
     /// Servers without dynamic resolution ignore it.
     pub fn resize(&self, width: u32, height: u32, scale: u32) {
-        self.send(Command::Resize { width, height, scale });
+        self.set_monitors(
+            vec![MonitorRect {
+                left: 0,
+                top: 0,
+                width,
+                height,
+            }],
+            scale,
+        );
+    }
+
+    /// Asks the remote PC to use these monitors (device pixels; the first is the primary and must
+    /// be at 0,0). The desktop then covers all of them, from the top-left-most corner.
+    pub fn set_monitors(&self, monitors: Vec<MonitorRect>, scale: u32) {
+        self.send(Command::Layout { monitors, scale });
     }
 
     /// Asks the server to end the session; a `Disconnected` event follows.
@@ -267,9 +282,8 @@ async fn establish(
     // Without it the server would lean on codecs IronRDP doesn't decode reliably yet, so the
     // session stays on legacy bitmap updates.
     if let Some(h264) = h264 {
-        let h264 = h264::SharedDecoder::new(h264);
-        let output = GfxOutput::new(framebuffer.clone(), events.clone(), h264.clone());
-        drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(output), Some(Box::new(h264))));
+        let output = GfxOutput::new(framebuffer.clone(), events.clone());
+        drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(output), Some(h264)));
     }
     let microphone = config.microphone.clone().map(|microphone| {
         let (input, packets) = audin::AudioInput::new(microphone);
@@ -623,8 +637,8 @@ async fn active_session(
                     stage.process_fastpath_input(&mut image, &[event]).map_err(protocol_error)?
                 }
                 Ok(Command::Pause) => stage.process_fastpath_input(&mut image, &pause_sequence()).map_err(protocol_error)?,
-                Ok(Command::Resize { width, height, scale }) => {
-                    display.request(width, height, scale, framebuffer.size());
+                Ok(Command::Layout { monitors, scale }) => {
+                    display.request(Layout::new(monitors, scale), framebuffer.size());
                     display.send(&mut stage)?
                 }
                 Ok(Command::FetchClipboardFiles { dir, reply }) => {
@@ -759,28 +773,58 @@ async fn pointer(events: &Events, event: PointerEvent) {
     let _ = events.send(SessionEvent::Pointer(event)).await;
 }
 
-/// Dynamic resolution (MS-RDPEDISP): the latest requested size, sent once the channel is ready.
+/// Dynamic resolution (MS-RDPEDISP): the latest requested layout, sent once the channel is ready.
 #[derive(Default)]
 struct DisplayControl {
     ready: bool,
-    pending: Option<(u32, u32, u32)>,
-    /// The last size we asked for, so repeated identical requests are dropped.
-    requested: Option<(u32, u32, u32)>,
+    pending: Option<Layout>,
+    /// The last layout we asked for, so repeated identical requests are dropped.
+    requested: Option<Layout>,
     /// The framebuffer generation last seen, to notice the server (re)sizing the desktop.
     seen: u64,
     /// The last request was sent again already (see `desktop_changed`).
     retried: bool,
 }
 
+/// Monitors (the first is the primary, at 0,0) and the scale in percent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Layout {
+    monitors: Vec<MonitorRect>,
+    scale: u32,
+}
+
+impl Layout {
+    fn new(monitors: Vec<MonitorRect>, scale: u32) -> Self {
+        let monitors = monitors
+            .into_iter()
+            .map(|m| {
+                let (width, height) = MonitorLayoutEntry::adjust_display_size(m.width, m.height);
+                MonitorRect { width, height, ..m }
+            })
+            .collect();
+        Self { monitors, scale }
+    }
+
+    /// The size of the desktop covering every monitor.
+    fn bounds(&self) -> (u32, u32) {
+        let left = self.monitors.iter().map(|m| m.left).min().unwrap_or(0);
+        let top = self.monitors.iter().map(|m| m.top).min().unwrap_or(0);
+        let right = self.monitors.iter().map(|m| m.left + m.width as i32).max().unwrap_or(0);
+        let bottom = self.monitors.iter().map(|m| m.top + m.height as i32).max().unwrap_or(0);
+        ((right - left).max(0) as u32, (bottom - top).max(0) as u32)
+    }
+}
+
 impl DisplayControl {
     /// `current`: the desktop size now.
-    fn request(&mut self, width: u32, height: u32, scale: u32, current: (u32, u32)) {
-        let (width, height) = MonitorLayoutEntry::adjust_display_size(width, height);
-        let request = (width, height, scale);
-        if self.requested == Some(request) || (self.requested.is_none() && current == (width, height)) {
+    fn request(&mut self, layout: Layout, current: (u32, u32)) {
+        if layout.monitors.is_empty()
+            || self.requested.as_ref() == Some(&layout)
+            || (self.requested.is_none() && layout.monitors.len() == 1 && current == layout.bounds())
+        {
             return;
         }
-        self.pending = Some(request);
+        self.pending = Some(layout);
         self.retried = false;
     }
 
@@ -796,15 +840,15 @@ impl DisplayControl {
             return Ok(Vec::new());
         }
         self.seen = generation;
-        match self.requested {
-            Some(request) if (request.0, request.1) != current && !self.retried => {
+        match &self.requested {
+            Some(request) if request.bounds() != current && !self.retried => {
                 debug!(
                     ?current,
                     ?request,
-                    "Desktop doesn't match the requested size; asking again"
+                    "Desktop doesn't match the requested layout; asking again"
                 );
                 self.retried = true;
-                self.pending = Some(request);
+                self.pending = self.requested.clone();
                 self.send(stage)
             }
             _ => Ok(Vec::new()),
@@ -815,19 +859,61 @@ impl DisplayControl {
         if !self.ready {
             return Ok(Vec::new());
         }
-        let Some((width, height, scale)) = self.pending.take() else {
+        let Some(layout) = self.pending.take() else {
             return Ok(Vec::new());
         };
-        debug!(width, height, scale, "Requesting a desktop resize");
-        let scale_factor = (scale >= 100).then_some(scale);
-        match stage.encode_resize(width, height, scale_factor, None) {
+        debug!(?layout, "Requesting a desktop layout");
+        let frame = match layout.monitors.as_slice() {
+            [single] => {
+                let scale_factor = (layout.scale >= 100).then_some(layout.scale);
+                stage.encode_resize(single.width, single.height, scale_factor, None)
+            }
+            monitors => encode_layout(stage, monitors, layout.scale),
+        };
+        match frame {
             Some(frame) => {
-                self.requested = Some((width, height, scale));
+                self.requested = Some(layout);
                 Ok(vec![ActiveStageOutput::ResponseFrame(frame.map_err(protocol_error)?)])
             }
             None => Ok(Vec::new()),
         }
     }
+}
+
+/// A multi-monitor layout for the Display Control channel (`None` before it's connected).
+fn encode_layout(
+    stage: &mut ActiveStage,
+    monitors: &[MonitorRect],
+    scale: u32,
+) -> Option<Result<Vec<u8>, SessionError>> {
+    let entries: Result<Vec<MonitorLayoutEntry>, _> = monitors
+        .iter()
+        .enumerate()
+        .map(|(i, m)| {
+            let entry = if i == 0 {
+                MonitorLayoutEntry::new_primary(m.width, m.height)?
+            } else {
+                MonitorLayoutEntry::new_secondary(m.width, m.height)?
+            };
+            let entry = entry.with_position(m.left, m.top)?;
+            if scale >= 100 {
+                entry.with_desktop_scale_factor(scale)
+            } else {
+                Ok(entry)
+            }
+        })
+        .collect();
+    let layout = match entries.and_then(|entries| DisplayControlMonitorLayout::new(&entries)) {
+        Ok(layout) => layout,
+        Err(e) => return Some(Err(SessionError::encode(e))),
+    };
+    let channel_id = stage.get_dvc::<DisplayControlClient>()?.channel_id()?;
+    let pdu: DisplayControlPdu = layout.into();
+    let messages = match ironrdp::dvc::encode_dvc_messages(channel_id, vec![Box::new(pdu)], ChannelFlags::empty()) {
+        Ok(messages) => messages,
+        Err(e) => return Some(Err(SessionError::encode(e))),
+    };
+    Some(stage.encode_dvc_messages(messages))
 }
 
 fn clipboard_frames(

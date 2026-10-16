@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use clap::{Parser, Subcommand};
-use rdesk_core::{Credentials, Security, SessionConfig, SessionEvent};
+use rdesk_core::{Credentials, MonitorRect, Security, SessionConfig, SessionEvent};
 use tokio::time::Instant;
 use tracing::{info, warn};
 
@@ -54,6 +54,34 @@ struct ScreenshotArgs {
     /// Overall time limit in seconds.
     #[arg(long, default_value_t = 60)]
     timeout: u64,
+    /// Monitors to ask for once connected, e.g. `1280x800,1024x768+1280+0` (the first is the
+    /// primary, at 0,0). The screenshot then shows the whole multi-monitor desktop.
+    #[arg(long, value_parser = parse_monitors)]
+    monitors: Option<Monitors>,
+}
+
+#[derive(Debug, Clone)]
+struct Monitors(Vec<MonitorRect>);
+
+fn parse_monitors(text: &str) -> Result<Monitors, String> {
+    text.split(',')
+        .map(|monitor| {
+            let (size, position) = monitor.split_once('+').map_or((monitor, None), |(s, p)| (s, Some(p)));
+            let (width, height) = size.split_once('x').ok_or(format!("{monitor}: expected WxH"))?;
+            let (left, top) = match position {
+                Some(position) => position.split_once('+').ok_or(format!("{monitor}: expected +X+Y"))?,
+                None => ("0", "0"),
+            };
+            let number = |s: &str| s.parse::<i64>().map_err(|e| format!("{monitor}: {e}"));
+            Ok(MonitorRect {
+                left: number(left)? as i32,
+                top: number(top)? as i32,
+                width: number(width)? as u32,
+                height: number(height)? as u32,
+            })
+        })
+        .collect::<Result<_, _>>()
+        .map(Monitors)
 }
 
 fn main() -> anyhow::Result<()> {
@@ -147,6 +175,9 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
             }
             SessionEvent::Connected { width, height } => {
                 info!(width, height, elapsed_ms = started.elapsed().as_millis(), "Connected");
+                if let Some(Monitors(monitors)) = &args.monitors {
+                    session.set_monitors(monitors.clone(), 100);
+                }
             }
             SessionEvent::DesktopResized { width, height } => info!(width, height, "Desktop resized"),
             SessionEvent::FrameReady => {

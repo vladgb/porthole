@@ -54,7 +54,8 @@ pub(super) fn schedule(state: &State) {
 }
 
 fn request(state: &State) {
-    if !state.connected.get() {
+    // While spanning all monitors the layout comes from `monitors`.
+    if !state.connected.get() || state.spanning.get() {
         return;
     }
     let (width, height) = (state.picture.width(), state.picture.height());

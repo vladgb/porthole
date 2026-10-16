@@ -124,7 +124,10 @@ impl Framebuffer {
     }
 
     /// Records full damage without changing pixels (after a resize). Returns true if the UI should be notified.
-    pub(crate) fn mark_full_damage(&self) -> bool {
+    /// Makes the next [`Framebuffer::take_damage`] report everything as changed, e.g. after the UI
+    /// rearranged how it shows the desktop. Returns whether the UI must be told (no `FrameReady`
+    /// is pending).
+    pub fn mark_full_damage(&self) -> bool {
         let mut inner = self.lock();
         inner.full_damage = true;
         inner.damage.clear();
