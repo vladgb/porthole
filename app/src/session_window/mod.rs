@@ -40,6 +40,7 @@ pub struct Target {
     pub clipboard: bool,
     pub audio: bool,
     pub microphone: bool,
+    pub camera: bool,
     pub all_monitors: bool,
     /// Lossless picture instead of H.264.
     pub best_quality: bool,
@@ -71,6 +72,7 @@ struct Inner {
     clipboard: bool,
     audio: bool,
     microphone: bool,
+    camera: bool,
     all_monitors: bool,
     best_quality: bool,
     /// Full screen over every monitor is active (see `monitors`).
@@ -138,6 +140,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         clipboard,
         audio,
         microphone,
+        camera,
         all_monitors,
         best_quality,
         shared_folders,
@@ -240,6 +243,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         clipboard,
         audio,
         microphone,
+        camera,
         all_monitors,
         best_quality,
         spanning: Cell::new(false),
@@ -347,6 +351,9 @@ fn start(state: &State) {
                 .map_err(|e| e.to_string())
         });
         config.microphone = Some(microphone);
+    }
+    if state.camera {
+        config.camera = Some(Arc::new(rdesk_camera::PipeWireCameras));
     }
     config.shared_folders = state
         .shared_folders

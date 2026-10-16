@@ -1,4 +1,5 @@
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use ironrdp::cliprdr::{CliprdrClient, CliprdrSvcMessages};
@@ -32,7 +33,6 @@ use tokio::time::Instant;
 use tokio_rustls::client::TlsStream;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::audin;
 use crate::clipboard::{self, Clipboard, ClipboardContent};
 use crate::clipboard_files::FetchResult;
 use crate::config::{MonitorRect, Security, SessionConfig};
@@ -41,6 +41,7 @@ use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEven
 use crate::framebuffer::{Framebuffer, Rect};
 use crate::gfx::GfxOutput;
 use crate::tls;
+use crate::{audin, camera};
 use crate::{h264, kerberos};
 
 /// How long to wait for the server to close the connection after we ask it to.
@@ -229,6 +230,8 @@ struct Channels {
     display_ready: mpsc::UnboundedReceiver<()>,
     /// Microphone packets to send.
     microphone: Option<audin::Packets>,
+    /// Camera frames to send.
+    camera: Option<camera::Samples>,
 }
 
 async fn establish(
@@ -290,11 +293,36 @@ async fn establish(
         drdynvc = std::mem::take(&mut drdynvc).with_dynamic_channel(input);
         packets
     });
+    let camera = match &config.camera {
+        Some(backend) => {
+            let backend = Arc::clone(backend);
+            let devices = tokio::task::spawn_blocking({
+                let backend = Arc::clone(&backend);
+                move || backend.devices()
+            })
+            .await
+            .unwrap_or_default();
+            if devices.is_empty() {
+                info!("No cameras to share");
+                None
+            } else {
+                info!(cameras = ?devices.iter().map(|d| &d.name).collect::<Vec<_>>(), "Sharing cameras");
+                let (channels, samples) = camera::channels(&backend, devices);
+                drdynvc = std::mem::take(&mut drdynvc).with_dynamic_channel(channels.enumerator);
+                for device in channels.devices {
+                    drdynvc = std::mem::take(&mut drdynvc).with_listener(device);
+                }
+                Some(samples)
+            }
+        }
+        None => None,
+    };
     connector.attach_static_channel(drdynvc);
     let channels = Channels {
         clipboard: clipboard_signals,
         display_ready,
         microphone,
+        camera,
     };
 
     let should_upgrade = within(
@@ -607,6 +635,7 @@ async fn active_session(
         clipboard: mut clipboard_signals,
         mut display_ready,
         mut microphone,
+        mut camera,
     } = channels;
     let mut display = DisplayControl::default();
     let mut clipboard_timer = tokio::time::interval(Duration::from_secs(5));
@@ -681,6 +710,11 @@ async fn active_session(
                 let channel_id = microphone.as_ref().map_or(0, |m| m.channel_id.load(std::sync::atomic::Ordering::Relaxed));
                 let messages = ironrdp::dvc::encode_dvc_messages(channel_id, audin::Packets::messages(packet), ChannelFlags::empty())
                     .map_err(|e| DisconnectReason::Internal(format!("microphone data: {e}")))?;
+                vec![ActiveStageOutput::ResponseFrame(stage.encode_dvc_messages(messages).map_err(protocol_error)?)]
+            }
+            Some((channel_id, sample)) = recv_sample(&mut camera) => {
+                let messages = ironrdp::dvc::encode_dvc_messages(channel_id, camera::Samples::messages(sample), ChannelFlags::empty())
+                    .map_err(|e| DisconnectReason::Internal(format!("camera data: {e}")))?;
                 vec![ActiveStageOutput::ResponseFrame(stage.encode_dvc_messages(messages).map_err(protocol_error)?)]
             }
             _ = clipboard_timer.tick(), if clipboard_signals.is_some() => {
@@ -955,6 +989,14 @@ fn clipboard_frames(
 async fn recv_packet(microphone: &mut Option<audin::Packets>) -> Option<Vec<u8>> {
     match microphone {
         Some(microphone) => microphone.receiver.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Waits for a camera frame; never resolves without cameras.
+async fn recv_sample(camera: &mut Option<camera::Samples>) -> Option<(u32, Vec<u8>)> {
+    match camera {
+        Some(camera) => camera.receiver.recv().await,
         None => std::future::pending().await,
     }
 }

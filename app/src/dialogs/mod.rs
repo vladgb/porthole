@@ -245,6 +245,11 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
         .subtitle("Let the PC record from this computer's microphone")
         .active(pc.is_some_and(|pc| pc.microphone))
         .build();
+    let camera_row = adw::SwitchRow::builder()
+        .title("Use Camera")
+        .subtitle("Let the PC use this computer's cameras")
+        .active(pc.is_some_and(|pc| pc.camera))
+        .build();
     let nla_row = adw::SwitchRow::builder()
         .title("Network Level Authentication")
         .subtitle("Turn off only for PCs that don't support it")
@@ -273,6 +278,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     list.append(&clipboard_row);
     list.append(&audio_row);
     list.append(&microphone_row);
+    list.append(&camera_row);
     list.append(&monitors_row);
     list.append(&quality_row);
     let folders = SharedFolders::new(pc.map_or(&[][..], |pc| &pc.shared_folders));
@@ -335,6 +341,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     saved.clipboard = clipboard_row.is_active();
     saved.audio = audio_row.is_active();
     saved.microphone = microphone_row.is_active();
+    saved.camera = camera_row.is_active();
     saved.all_monitors = monitors_row.is_active();
     saved.best_quality = quality_row.selected() == 1;
     saved.shared_folders = folders.paths.borrow().clone();

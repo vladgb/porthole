@@ -18,6 +18,7 @@
 //! ```
 
 mod audin;
+mod camera;
 pub(crate) mod clipboard;
 mod clipboard_files;
 mod config;
@@ -31,6 +32,7 @@ mod session;
 mod tls;
 
 pub use audin::{CaptureFormat, Microphone};
+pub use camera::{CameraBackend, CameraDevice, Cameras, FrameSink, VideoFormat, VideoMode};
 pub use clipboard::{ClipboardContent, RemoteClipboard};
 pub use clipboard_files::{FetchResult, RemoteFile};
 pub use config::{AddressError, AudioOutput, Credentials, MonitorRect, Security, SessionConfig, parse_address};

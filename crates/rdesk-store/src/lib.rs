@@ -62,6 +62,9 @@ pub struct Pc {
     /// Let the PC record from this computer's microphone.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub microphone: bool,
+    /// Let the PC use this computer's cameras.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub camera: bool,
     /// In full screen, use every local monitor.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_monitors: bool,
@@ -102,6 +105,7 @@ impl Pc {
             clipboard: true,
             audio: true,
             microphone: false,
+            camera: false,
             all_monitors: false,
             best_quality: false,
             shared_folders: Vec::new(),

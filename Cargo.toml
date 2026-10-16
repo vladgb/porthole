@@ -9,12 +9,13 @@ members = [
     "crates/rdesk-workspaces",
     "crates/rdesk-gateway",
     "crates/rdesk-audio",
+    "crates/rdesk-camera",
     "app",
     "cli",
     "spikes/rdp-screenshot",
     "spikes/gtk-texture",
 ]
-# `app`, `rdesk-audio` and `spikes/gtk-texture` need system libraries (GTK4/libadwaita, PipeWire + libclang);
+# `app`, `rdesk-audio`, `rdesk-camera` and `spikes/gtk-texture` need system libraries (GTK4/libadwaita, PipeWire + libclang);
 # everything else builds with only a Rust toolchain.
 default-members = [
     "crates/rdesk-core",
@@ -45,6 +46,7 @@ rdesk-store = { path = "crates/rdesk-store" }
 rdesk-workspaces = { path = "crates/rdesk-workspaces" }
 rdesk-gateway = { path = "crates/rdesk-gateway" }
 rdesk-audio = { path = "crates/rdesk-audio" }
+rdesk-camera = { path = "crates/rdesk-camera" }
 
 # RDP stack. sspi/x509-cert are pinned to the versions ironrdp-connector 0.10 uses.
 ironrdp = { version = "0.17", features = ["core", "connector", "session", "graphics", "pdu", "input", "svc", "dvc", "cliprdr", "displaycontrol", "rdpsnd", "rdpdr"] }

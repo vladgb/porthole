@@ -155,7 +155,7 @@ Priority: **P0** = MVP, **P1** = v1.0 parity, **P2** = post-1.0.
 - [P1] Microphone redirection.
 - [P1] Printer redirection (via CUPS, using the generic/XPS or "Microsoft Print to PDF"-style driver).
 - [P1] Smart card redirection.
-- [P2] Camera redirection.
+- [P2] Camera redirection. Done (2026-10-16).
 - [P2] Serial/port redirection (low priority).
 
 **Folders**
@@ -369,6 +369,8 @@ Status 2026-10-14: steps 1–4 done; spike verified against xrdp and Windows 11 
 Phase 1 progress (2026-10-15): `rdesk-core` session engine, `rdesk-input` key table, `rdesk-cli screenshot`, and the app's quick connect → sign-in → certificate prompt → session window (rendering, keyboard, mouse, wheel, remote cursor, full screen, readable disconnect reasons) work against Windows 11 with NLA. `rdesk-store` keeps saved PCs (add/edit/remove, per-PC NLA switch) and "always trust" certificate fingerprints per host:port as TOML in `$XDG_CONFIG_HOME/rdesk/`. The keyboard layout announced to the PC follows the active local layout (XKB name → Windows KLID). Text clipboard is shared both ways over CLIPRDR (per-PC switch). Phase 1 feature-complete; next is Phase 2.
 
 Phase 2/3 progress (2026-10-15): dynamic resolution with HiDPI scale (Display Control DVC), Send Keys menu + full-screen shortcut inhibition, automatic reconnection, grid/list of saved PCs with last-session thumbnails, groups, search and sort, passwords in the keyring (oo7), audio playback via PipeWire (RDPSND, new `rdesk-audio` crate). Not started: EGFX/H.264, multi-monitor, microphone, clipboard images/files, drive/printer/smart-card redirection, Kerberos, `.rdp` import/export + URI handler, gateways, packaging.
+
+Progress (2026-10-16): EGFX with H.264 (OpenH264 loaded at run time; BT.709 full-range colour), per-PC "Picture Quality" (Balanced = H.264, Best = lossless bitmap codecs), all-monitor full screen, microphone (AUDIN), clipboard images and files, shared folders (RDPDR drives), Kerberos, full-screen corner button, smooth audio (jitter buffer; vendored `ironrdp-rdpsnd` fixes the format index mix-up), and camera redirection (MS-RDPECAM v1 over PipeWire, new `rdesk-camera` crate; MJPEG/YUY2/NV12 passed through, per-PC "Use Camera"). Not started: printers, smart cards, `.rdp` import/export + URI handler, packaging. RD Gateway is a future enhancement.
 
 1. Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
 2. Install system deps (Ubuntu): `sudo apt install libgtk-4-dev libadwaita-1-dev libpipewire-0.3-dev libpcsclite-dev pkg-config clang`.
