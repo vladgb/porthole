@@ -235,8 +235,8 @@ Priority: **P0** = MVP, **P1** = v1.0 parity, **P2** = post-1.0.
 
 ### 4.9 Gateways
 - [P1] Gateways manager (add/edit/delete, credentials or "use PC credentials").
-- [P1] RD Gateway over HTTP transport (MS-TSGU, RPC-over-HTTP fallback is P2).
-- [P1] RD Gateway WebSocket transport.
+- [Future] RD Gateway over HTTP transport (MS-TSGU, RPC-over-HTTP fallback). Deferred (2026-10-16): not needed by the current users; revisit with demand.
+- [Future] RD Gateway WebSocket transport.
 - [P2] UDP gateway transport.
 - [P2] Gateway messaging (consent/admin messages shown to the user).
 
@@ -322,7 +322,7 @@ Rough sizing assumes one experienced Rust developer; parallelize where possible.
 - `.rdp` import/export, URI handler, CLI launch.
 
 ### Phase 4 — Gateways & enterprise (3–5 weeks)
-- RD Gateway (HTTP + WebSocket), gateways manager.
+- RD Gateway (HTTP + WebSocket), gateways manager — deferred to a future enhancement (2026-10-16).
 - Server redirection / session broker.
 - Restricted Admin / Remote Credential Guard.
 
