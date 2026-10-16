@@ -51,11 +51,10 @@ pub struct Target {
 struct Inner {
     window: adw::ApplicationWindow,
     toolbar: adw::ToolbarView,
-    fullscreen_button: gtk::Button,
-    /// Hides the header bar in full screen once the pointer has left it.
+    /// The leave-full-screen button shown in full screen (see `toolbar`).
+    corner: gtk::Revealer,
+    /// Hides `corner` once the pointer has left it.
     hide_timer: RefCell<Option<glib::SourceId>>,
-    /// A header bar menu is open, so the bar stays.
-    toolbar_menu_open: Cell<bool>,
     title: adw::WindowTitle,
     toasts: adw::ToastOverlay,
     stack: gtk::Stack,
@@ -196,9 +195,12 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
 
     let toasts = adw::ToastOverlay::new();
     toasts.set_child(Some(&stack));
+    let (corner, corner_button) = toolbar::corner_button();
+    let overlay = gtk::Overlay::builder().child(&toasts).build();
+    overlay.add_overlay(&corner);
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
-    toolbar.set_content(Some(&toasts));
+    toolbar.set_content(Some(&overlay));
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
@@ -219,9 +221,8 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
     let state = Rc::new(Inner {
         window,
         toolbar,
-        fullscreen_button: fullscreen.clone(),
+        corner,
         hide_timer: RefCell::default(),
-        toolbar_menu_open: Cell::new(false),
         title,
         toasts,
         stack,
@@ -281,9 +282,9 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         }
     });
     let weak = Rc::downgrade(&state);
-    keys_menu.connect_active_notify(move |menu| {
+    corner_button.connect_clicked(move |_| {
         if let Some(state) = weak.upgrade() {
-            state.toolbar_menu_open.set(menu.is_active());
+            toolbar::toggle_fullscreen(&state);
         }
     });
     toolbar::attach(&state);
