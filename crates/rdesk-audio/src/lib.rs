@@ -1,14 +1,17 @@
 //! Audio through PipeWire: the PC's sound (RDPSND) and the microphone (AUDIN capture).
 //!
-//! The server sends PCM in one of the formats we offer. Samples go into a short queue that a
-//! PipeWire playback stream, running on its own thread, drains in real time. The queue is capped
-//! so audio never lags far behind the picture: when it overflows, the oldest samples are dropped.
+//! The server sends PCM in one of the formats we offer, in large packets (Windows: about 170 ms
+//! each) at an uneven pace. Samples go into a jitter buffer that a PipeWire playback stream,
+//! running on its own thread, drains in real time: playback starts once a packet and some margin
+//! are queued, so the next packet arrives before the queue runs dry. The buffer is capped so audio
+//! never lags far behind the picture: when it overflows, the oldest samples are dropped.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use ironrdp_rdpsnd::client::RdpsndClientHandler;
 use ironrdp_rdpsnd::pdu::{AudioFormat, PitchPdu, VolumePdu, WaveFormat};
@@ -18,8 +21,12 @@ use tracing::{debug, warn};
 
 const CHANNELS: u16 = 2;
 const BYTES_PER_FRAME: usize = 4; // 16-bit stereo
-/// At most this much audio waits to be played.
-const MAX_QUEUED_MS: usize = 250;
+/// The jitter buffer holds at least this much before playing...
+const MIN_TARGET_MS: usize = 60;
+/// ...and at most this much, whatever the packet size.
+const MAX_TARGET_MS: usize = 500;
+/// Beyond the target, this much more may queue up before the oldest samples are dropped.
+const MAX_EXCESS_MS: usize = 250;
 
 /// 16-bit stereo PCM, which every Windows version can send.
 static FORMATS: [AudioFormat; 2] = [pcm(48_000), pcm(44_100)];
@@ -109,7 +116,7 @@ impl RdpsndClientHandler for PipeWireOutput {
 /// A PipeWire playback stream on its own thread.
 struct Player {
     rate: u32,
-    queue: Arc<Mutex<VecDeque<u8>>>,
+    queue: Arc<Mutex<Jitter>>,
     quit: pw::channel::Sender<()>,
     thread: Option<JoinHandle<()>>,
 }
@@ -124,7 +131,7 @@ impl std::fmt::Debug for Player {
 
 impl Player {
     fn start(rate: u32, volume: Arc<AtomicU32>) -> Result<Self, pw::Error> {
-        let queue = Arc::new(Mutex::new(VecDeque::new()));
+        let queue = Arc::new(Mutex::new(Jitter::new(rate)));
         let (quit, quit_rx) = pw::channel::channel::<()>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
@@ -149,14 +156,8 @@ impl Player {
     }
 
     fn push(&self, data: &[u8]) {
-        let max = self.rate as usize * BYTES_PER_FRAME * MAX_QUEUED_MS / 1000;
         let mut queue = self.queue.lock().unwrap_or_else(|e| e.into_inner());
-        queue.extend(data);
-        if queue.len() > max {
-            // Drop whole frames from the front so channels stay aligned.
-            let excess = (queue.len() - max).next_multiple_of(BYTES_PER_FRAME).min(queue.len());
-            queue.drain(..excess);
-        }
+        queue.push(data, Instant::now());
     }
 
     fn stop(mut self) {
@@ -169,7 +170,7 @@ impl Player {
 
 fn run(
     rate: u32,
-    queue: &Arc<Mutex<VecDeque<u8>>>,
+    queue: &Arc<Mutex<Jitter>>,
     volume: &Arc<AtomicU32>,
     quit: pw::channel::Receiver<()>,
     ready: &std::sync::mpsc::Sender<Result<(), pw::Error>>,
@@ -183,7 +184,6 @@ fn run(
     let mut properties = pw::properties::properties! {
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Playback",
-        *pw::keys::MEDIA_ROLE => "Communication",
         *pw::keys::NODE_LATENCY => latency,
         *pw::keys::APP_NAME => "Remote Desktop",
     };
@@ -201,29 +201,26 @@ fn run(
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 return;
             };
+            // Fill only what this cycle needs: the buffer itself holds far more, and filling it
+            // all would play long stretches of silence whenever the queue is short.
+            let requested = usize::try_from(buffer.requested()).unwrap_or(usize::MAX);
             let datas = buffer.datas_mut();
             let data = &mut datas[0];
             let Some(out) = data.data() else { return };
-            let frames = out.len() / BYTES_PER_FRAME;
+            let wanted = if requested == 0 { rate as usize / 50 } else { requested };
+            let frames = (out.len() / BYTES_PER_FRAME).min(wanted);
+            let out = &mut out[..frames * BYTES_PER_FRAME];
+            queue
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .pull(out, Instant::now());
             let gain = volume.load(Ordering::Relaxed);
             let (left, right) = (gain & 0xFFFF, gain >> 16);
-            let mut queue = queue.lock().unwrap_or_else(|e| e.into_inner());
-            for (i, sample) in out[..frames * BYTES_PER_FRAME]
-                .as_chunks_mut::<2>()
-                .0
-                .iter_mut()
-                .enumerate()
-            {
-                let value = match (queue.pop_front(), queue.pop_front()) {
-                    (Some(lo), Some(hi)) => i16::from_le_bytes([lo, hi]),
-                    // Underrun: silence until more audio arrives.
-                    _ => 0,
-                };
+            for (i, sample) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
                 let gain = if i % 2 == 0 { left } else { right };
-                let scaled = (i32::from(value) * gain as i32) >> 16;
+                let scaled = (i32::from(i16::from_le_bytes(*sample)) * gain as i32) >> 16;
                 *sample = (scaled as i16).to_le_bytes();
             }
-            drop(queue);
             let chunk = data.chunk_mut();
             *chunk.offset_mut() = 0;
             *chunk.stride_mut() = BYTES_PER_FRAME as _;
@@ -267,6 +264,76 @@ fn run(
     let _ = ready.send(Ok(()));
     mainloop.run();
     Ok(())
+}
+
+/// Smooths out the server's uneven delivery (see the module docs). Works in bytes of 16-bit
+/// stereo frames.
+struct Jitter {
+    samples: VecDeque<u8>,
+    /// Bytes per millisecond.
+    per_ms: usize,
+    /// Draining; false while (re)filling up to the target.
+    playing: bool,
+    last_push: Option<Instant>,
+    /// The largest packet so far: the queue must outlast the wait for the next one.
+    largest_packet: usize,
+}
+
+impl Jitter {
+    fn new(rate: u32) -> Self {
+        Self {
+            samples: VecDeque::new(),
+            per_ms: rate as usize * BYTES_PER_FRAME / 1000,
+            playing: false,
+            last_push: None,
+            largest_packet: 0,
+        }
+    }
+
+    /// How much to queue before playing: a packet and a quarter, within limits.
+    fn target(&self) -> usize {
+        (self.largest_packet + self.largest_packet / 4)
+            .clamp(MIN_TARGET_MS * self.per_ms, MAX_TARGET_MS * self.per_ms)
+            .next_multiple_of(BYTES_PER_FRAME)
+    }
+
+    fn push(&mut self, data: &[u8], now: Instant) {
+        self.largest_packet = self.largest_packet.max(data.len());
+        self.last_push = Some(now);
+        self.samples.extend(data);
+        let max = self.target() + MAX_EXCESS_MS * self.per_ms;
+        if self.samples.len() > max {
+            // Drop whole frames from the front so channels stay aligned.
+            let excess = (self.samples.len() - max)
+                .next_multiple_of(BYTES_PER_FRAME)
+                .min(self.samples.len());
+            self.samples.drain(..excess);
+        }
+    }
+
+    /// Fills `out` with what's due, silence where nothing is.
+    fn pull(&mut self, out: &mut [u8], now: Instant) {
+        if !self.playing && !self.samples.is_empty() {
+            let target = self.target();
+            // A sound's last bit never reaches the target: play it once nothing more is coming.
+            let idle = self
+                .last_push
+                .is_some_and(|t| now.duration_since(t) >= Duration::from_millis((target / self.per_ms.max(1)) as u64));
+            self.playing = self.samples.len() >= target || idle;
+        }
+        let mut filled = 0;
+        if self.playing {
+            filled = out.len().min(self.samples.len());
+            for (dst, src) in out[..filled].iter_mut().zip(self.samples.drain(..filled)) {
+                *dst = src;
+            }
+            if filled < out.len() {
+                // Ran dry: build the margin up again before resuming.
+                self.playing = false;
+            }
+        }
+        out[filled..].fill(0);
+    }
 }
 
 /// Receives captured interleaved 16-bit little-endian samples.
@@ -399,4 +466,65 @@ fn run_capture(
     let _ = ready.send(Ok(()));
     mainloop.run();
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RATE: u32 = 48_000;
+    const PER_MS: usize = 48 * BYTES_PER_FRAME;
+
+    fn packet(ms: usize, value: u8) -> Vec<u8> {
+        vec![value; ms * PER_MS]
+    }
+
+    #[test]
+    fn waits_for_a_packet_and_margin_then_plays_without_gaps() {
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
+        let mut jitter = Jitter::new(RATE);
+        let mut out = vec![0xFF; 10 * PER_MS];
+
+        jitter.push(&packet(170, 1), at(0));
+        jitter.pull(&mut out, at(5));
+        assert!(out.iter().all(|&b| b == 0), "one packet is below the target: silence");
+
+        jitter.push(&packet(170, 2), at(180));
+        // 340 ms queued, target 212 ms: plays, and 10 ms pulls every 10 ms never run dry before
+        // the next packet arrives 180 ms later.
+        for step in 0..18 {
+            jitter.pull(&mut out, at(181 + step * 10));
+            assert!(out.iter().all(|&b| b != 0), "gap at step {step}");
+        }
+        jitter.push(&packet(170, 3), at(360));
+        for step in 0..18 {
+            jitter.pull(&mut out, at(361 + step * 10));
+            assert!(out.iter().all(|&b| b != 0), "gap after the third packet at step {step}");
+        }
+    }
+
+    #[test]
+    fn plays_a_short_tail_once_nothing_more_comes() {
+        let start = Instant::now();
+        let mut jitter = Jitter::new(RATE);
+        let mut out = vec![0; 10 * PER_MS];
+        jitter.push(&packet(20, 7), start);
+        jitter.pull(&mut out, start + Duration::from_millis(10));
+        assert!(out.iter().all(|&b| b == 0));
+        jitter.pull(&mut out, start + Duration::from_millis(100));
+        assert!(out.iter().all(|&b| b == 7));
+    }
+
+    #[test]
+    fn drops_the_oldest_audio_when_far_behind() {
+        let start = Instant::now();
+        let mut jitter = Jitter::new(RATE);
+        for i in 0..20 {
+            jitter.push(&packet(100, i), start);
+        }
+        assert!(jitter.samples.len() <= jitter.target() + MAX_EXCESS_MS * PER_MS);
+        assert_eq!(jitter.samples.len() % BYTES_PER_FRAME, 0);
+        assert_eq!(jitter.samples.back(), Some(&19));
+    }
 }

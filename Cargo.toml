@@ -61,7 +61,7 @@ ironrdp-egfx = "0.3"
 openh264 = { version = "0.9", default-features = false, features = ["libloading"] }
 ironrdp-rdpsnd = "0.9"
 ironrdp-cliprdr-format = "0.2"
-pipewire = "0.10"
+pipewire = { version = "0.10", features = ["v0_3_49"] }
 
 # Runtime & plumbing
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
@@ -98,3 +98,4 @@ codegen-units = 1
 # Local patches to upstream crates; see vendor/README.md.
 [patch.crates-io]
 ironrdp-connector = { path = "vendor/ironrdp-connector" }
+ironrdp-rdpsnd = { path = "vendor/ironrdp-rdpsnd" }
