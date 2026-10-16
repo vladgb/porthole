@@ -6,6 +6,7 @@ mod keys;
 mod monitors;
 mod remote_files;
 mod resize;
+mod toolbar;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -50,6 +51,11 @@ pub struct Target {
 struct Inner {
     window: adw::ApplicationWindow,
     toolbar: adw::ToolbarView,
+    fullscreen_button: gtk::Button,
+    /// Hides the header bar in full screen once the pointer has left it.
+    hide_timer: RefCell<Option<glib::SourceId>>,
+    /// A header bar menu is open, so the bar stays.
+    toolbar_menu_open: Cell<bool>,
     title: adw::WindowTitle,
     toasts: adw::ToastOverlay,
     stack: gtk::Stack,
@@ -147,7 +153,8 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         .build();
     header.pack_start(&disconnect);
     header.pack_end(&fullscreen);
-    header.pack_end(&keys::menu_button());
+    let keys_menu = keys::menu_button();
+    header.pack_end(&keys_menu);
 
     let connecting = adw::StatusPage::builder()
         .title(format!("Connecting to {name}"))
@@ -212,6 +219,9 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
     let state = Rc::new(Inner {
         window,
         toolbar,
+        fullscreen_button: fullscreen.clone(),
+        hide_timer: RefCell::default(),
+        toolbar_menu_open: Cell::new(false),
         title,
         toasts,
         stack,
@@ -257,28 +267,26 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         state.window,
         move |_| window.close()
     ));
-    fullscreen.connect_clicked(glib::clone!(
-        #[weak(rename_to = window)]
-        state.window,
-        move |_| window.fullscreen()
-    ));
-    let weak_fullscreen = Rc::downgrade(&state);
-    state.window.connect_fullscreened_notify(glib::clone!(
-        #[weak(rename_to = toolbar)]
-        state.toolbar,
-        #[weak(rename_to = toasts)]
-        state.toasts,
-        move |window| {
-            let fullscreen = window.is_fullscreen();
-            toolbar.set_reveal_top_bars(!fullscreen);
-            if let Some(state) = weak_fullscreen.upgrade() {
-                monitors::fullscreen_changed(&state);
-            }
-            if fullscreen {
-                toasts.add_toast(adw::Toast::new("Press Ctrl+Alt+Enter to leave full screen"));
-            }
+    let weak = Rc::downgrade(&state);
+    fullscreen.connect_clicked(move |_| {
+        if let Some(state) = weak.upgrade() {
+            toolbar::toggle_fullscreen(&state);
         }
-    ));
+    });
+    let weak = Rc::downgrade(&state);
+    state.window.connect_fullscreened_notify(move |_| {
+        if let Some(state) = weak.upgrade() {
+            toolbar::fullscreen_changed(&state);
+            monitors::fullscreen_changed(&state);
+        }
+    });
+    let weak = Rc::downgrade(&state);
+    keys_menu.connect_active_notify(move |menu| {
+        if let Some(state) = weak.upgrade() {
+            state.toolbar_menu_open.set(menu.is_active());
+        }
+    });
+    toolbar::attach(&state);
 
     let weak = Rc::downgrade(&state);
     state.reconnect.connect_clicked(move |_| {
