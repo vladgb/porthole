@@ -29,6 +29,8 @@ struct Inner {
     full_damage: bool,
     /// A `FrameReady` event was sent and the UI hasn't taken the damage yet.
     notified: bool,
+    /// Counts resizes (including to the same size, as after a graphics reset).
+    generation: u64,
 }
 
 /// A view of the framebuffer and everything that changed since the last [`Framebuffer::take_damage`].
@@ -74,8 +76,14 @@ impl Framebuffer {
         result
     }
 
+    /// Changes whenever the desktop is (re)sized.
+    pub(crate) fn generation(&self) -> u64 {
+        self.lock().generation
+    }
+
     pub(crate) fn resize(&self, width: u32, height: u32) {
         let mut inner = self.lock();
+        inner.generation += 1;
         inner.width = width;
         inner.height = height;
         inner.data = vec![0; width as usize * height as usize * 4];

@@ -3,6 +3,7 @@
 mod clipboard;
 mod input;
 mod keys;
+mod remote_files;
 mod resize;
 
 use std::cell::{Cell, RefCell};

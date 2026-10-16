@@ -5,10 +5,11 @@ use std::rc::Rc;
 
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
+use libadwaita as adw;
 use rdesk_core::{ClipboardContent, RemoteClipboard};
 use tracing::{debug, warn};
 
-use super::State;
+use super::{State, remote_files};
 
 pub(super) fn attach(state: &State) {
     let clipboard = state.window.clipboard();
@@ -49,6 +50,39 @@ pub(super) fn set_remote(state: &State, remote: RemoteClipboard) {
         RemoteClipboard::Text(text) => {
             state.clipboard_setting.set(true);
             clipboard.set_text(&text);
+        }
+        RemoteClipboard::Files(files) => {
+            let count = files.iter().filter(|f| f.relative_path.is_none()).count();
+            let weak = Rc::downgrade(state);
+            let fetch: remote_files::Fetch = Rc::new(move || {
+                let weak = weak.clone();
+                Box::pin(async move {
+                    let state = weak.upgrade().ok_or("the session window was closed")?;
+                    let result = state
+                        .session
+                        .borrow()
+                        .as_ref()
+                        .map(|session| session.fetch_clipboard_files(remote_files::paste_dir()))
+                        .ok_or("the session has ended")?;
+                    let toast = adw::Toast::builder()
+                        .title(format!("Copying {count} item(s) from the PC…"))
+                        .timeout(0)
+                        .build();
+                    state.toasts.add_toast(toast.clone());
+                    let outcome = result.await.unwrap_or_else(|_| Err("the session has ended".to_owned()));
+                    toast.dismiss();
+                    if let Err(e) = &outcome {
+                        state
+                            .toasts
+                            .add_toast(adw::Toast::new(&format!("Couldn't copy the files: {e}")));
+                    }
+                    outcome
+                })
+            });
+            state.clipboard_setting.set(true);
+            if let Err(e) = clipboard.set_content(Some(&remote_files::RemoteFiles::new(fetch))) {
+                warn!(error = %e, "Couldn't offer the PC's files");
+            }
         }
         RemoteClipboard::Image(png) => match gdk::Texture::from_bytes(&glib::Bytes::from_owned(png)) {
             Ok(texture) => {
@@ -91,6 +125,19 @@ async fn read(clipboard: &gdk::Clipboard) -> ClipboardContent {
             Err(e) => debug!(error = %e, "Couldn't read clipboard text"),
         }
     }
+    if unknown || formats.contains_type(gdk::FileList::static_type()) || formats.contain_mime_type("text/uri-list") {
+        match clipboard
+            .read_value_future(gdk::FileList::static_type(), glib::Priority::DEFAULT)
+            .await
+        {
+            Ok(value) => {
+                if let Ok(list) = value.get::<gdk::FileList>() {
+                    content.files = list.files().iter().filter_map(|f| f.path()).collect();
+                }
+            }
+            Err(e) => debug!(error = %e, "Couldn't read copied files"),
+        }
+    }
     if unknown || formats.contain_mime_type("image/png") {
         content.png = read_png(clipboard).await;
     } else if formats.contains_type(gdk::Texture::static_type()) {
@@ -104,6 +151,7 @@ async fn read(clipboard: &gdk::Clipboard) -> ClipboardContent {
         formats = %formats.to_str(),
         text = content.text.is_some(),
         png_bytes = content.png.as_ref().map(Vec::len),
+        files = content.files.len(),
         "Local clipboard"
     );
     content

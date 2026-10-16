@@ -32,6 +32,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::audin;
 use crate::clipboard::{self, Clipboard, ClipboardContent};
+use crate::clipboard_files::FetchResult;
 use crate::config::{Security, SessionConfig};
 use crate::drive::DriveBackend;
 use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEvent, SessionEvent};
@@ -46,10 +47,22 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(3);
 enum Command {
     Input(Vec<Operation>),
     ReleaseAll,
-    SyncLocks { caps: bool, num: bool, scroll: bool },
+    SyncLocks {
+        caps: bool,
+        num: bool,
+        scroll: bool,
+    },
     Pause,
     Clipboard(ClipboardContent),
-    Resize { width: u32, height: u32, scale: u32 },
+    FetchClipboardFiles {
+        dir: std::path::PathBuf,
+        reply: oneshot::Sender<FetchResult>,
+    },
+    Resize {
+        width: u32,
+        height: u32,
+        scale: u32,
+    },
     Disconnect,
 }
 
@@ -89,6 +102,20 @@ impl SessionHandle {
     /// Reports what the local clipboard holds, offered to the remote PC.
     pub fn set_clipboard(&self, content: ClipboardContent) {
         self.send(Command::Clipboard(content));
+    }
+
+    /// Pastes the files the PC copied (announced as [`crate::RemoteClipboard::Files`]): downloads them
+    /// into `dir` and resolves to the top-level items there.
+    pub fn fetch_clipboard_files(&self, dir: std::path::PathBuf) -> oneshot::Receiver<FetchResult> {
+        let (reply, result) = oneshot::channel();
+        if let Err(
+            async_channel::TrySendError::Full(Command::FetchClipboardFiles { reply, .. })
+            | async_channel::TrySendError::Closed(Command::FetchClipboardFiles { reply, .. }),
+        ) = self.commands.try_send(Command::FetchClipboardFiles { dir, reply })
+        {
+            let _ = reply.send(Err("the session has ended".to_owned()));
+        }
+        result
     }
 
     /// Asks the remote PC to change its desktop size (device pixels) and scale (percent, 0: keep).
@@ -568,6 +595,8 @@ async fn active_session(
         mut microphone,
     } = channels;
     let mut display = DisplayControl::default();
+    let mut clipboard_timer = tokio::time::interval(Duration::from_secs(5));
+    clipboard_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         let outputs = tokio::select! {
@@ -598,6 +627,20 @@ async fn active_session(
                     display.request(width, height, scale, framebuffer.size());
                     display.send(&mut stage)?
                 }
+                Ok(Command::FetchClipboardFiles { dir, reply }) => {
+                    let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else {
+                        let _ = reply.send(Err("clipboard sharing is off".to_owned()));
+                        continue;
+                    };
+                    match clipboard.fetch_files(dir, reply, channel) {
+                        Ok(Some(messages)) => clipboard_frames(&stage, messages)?,
+                        Ok(None) => Vec::new(),
+                        Err(e) => {
+                            warn!(error = %e, "Clipboard file request failed");
+                            Vec::new()
+                        }
+                    }
+                }
                 Ok(Command::Clipboard(content)) => {
                     let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
                     match clipboard.set_local(content, channel) {
@@ -625,6 +668,17 @@ async fn active_session(
                 let messages = ironrdp::dvc::encode_dvc_messages(channel_id, audin::Packets::messages(packet), ChannelFlags::empty())
                     .map_err(|e| DisconnectReason::Internal(format!("microphone data: {e}")))?;
                 vec![ActiveStageOutput::ResponseFrame(stage.encode_dvc_messages(messages).map_err(protocol_error)?)]
+            }
+            _ = clipboard_timer.tick(), if clipboard_signals.is_some() => {
+                // Expires clipboard locks the remote no longer needs.
+                let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
+                match channel.drive_timeouts() {
+                    Ok(messages) => clipboard_frames(&stage, messages)?,
+                    Err(e) => {
+                        debug!(error = %e, "Clipboard timeouts");
+                        Vec::new()
+                    }
+                }
             }
             Some(signal) = recv(&mut clipboard_signals) => {
                 let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else { continue };
@@ -686,6 +740,11 @@ async fn active_session(
             }
         }
         publish(framebuffer, events, &image, &mut dirty);
+        for output in display.desktop_changed(framebuffer.generation(), framebuffer.size(), &mut stage)? {
+            if let ActiveStageOutput::ResponseFrame(frame) = output {
+                writer.write_all(&frame).await.map_err(lost)?;
+            }
+        }
     }
 }
 
@@ -707,6 +766,10 @@ struct DisplayControl {
     pending: Option<(u32, u32, u32)>,
     /// The last size we asked for, so repeated identical requests are dropped.
     requested: Option<(u32, u32, u32)>,
+    /// The framebuffer generation last seen, to notice the server (re)sizing the desktop.
+    seen: u64,
+    /// The last request was sent again already (see `desktop_changed`).
+    retried: bool,
 }
 
 impl DisplayControl {
@@ -718,6 +781,34 @@ impl DisplayControl {
             return;
         }
         self.pending = Some(request);
+        self.retried = false;
+    }
+
+    /// The server can override a resize, e.g. when the Graphics Pipeline starts at the initial
+    /// size right after our request. Asks once more if the desktop doesn't match the request.
+    fn desktop_changed(
+        &mut self,
+        generation: u64,
+        current: (u32, u32),
+        stage: &mut ActiveStage,
+    ) -> Result<Vec<ActiveStageOutput>, DisconnectReason> {
+        if generation == self.seen {
+            return Ok(Vec::new());
+        }
+        self.seen = generation;
+        match self.requested {
+            Some(request) if (request.0, request.1) != current && !self.retried => {
+                debug!(
+                    ?current,
+                    ?request,
+                    "Desktop doesn't match the requested size; asking again"
+                );
+                self.retried = true;
+                self.pending = Some(request);
+                self.send(stage)
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 
     fn send(&mut self, stage: &mut ActiveStage) -> Result<Vec<ActiveStageOutput>, DisconnectReason> {

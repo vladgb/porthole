@@ -1,17 +1,23 @@
-//! Text clipboard over the CLIPRDR static channel (MS-RDPECLIP).
+//! Clipboard over the CLIPRDR static channel (MS-RDPECLIP): text, images and files.
 //!
 //! IronRDP calls the backend synchronously while it processes channel data; the backend only
 //! forwards those calls as [`Signal`]s, which the session loop handles with access to the channel.
-//! Remote text is fetched as soon as the remote copies it; local text is announced when the UI
-//! reports it and sent when the remote pastes.
+//! Remote text and images are fetched as soon as the remote copies them, remote files only when
+//! the UI pastes them; local content is announced when the UI reports it and sent when the remote
+//! pastes.
+
+use std::path::PathBuf;
 
 use ironrdp::cliprdr::CliprdrClient;
 use ironrdp::cliprdr::CliprdrSvcMessages;
 use ironrdp::cliprdr::backend::CliprdrBackend;
 use ironrdp::cliprdr::pdu::{
-    ClipboardFormat, ClipboardFormatId, ClipboardGeneralCapabilityFlags, FileContentsRequest, FileContentsResponse,
-    FormatDataRequest, FormatDataResponse, LockDataId, OwnedFormatDataResponse,
+    ClipboardFormat, ClipboardFormatId, ClipboardFormatName, ClipboardGeneralCapabilityFlags, FileContentsRequest,
+    FileContentsResponse, FileDescriptor, FormatDataRequest, FormatDataResponse, LockDataId, OwnedFormatDataResponse,
 };
+use tokio::sync::oneshot;
+
+use crate::clipboard_files::{Download, FetchResult, LocalFiles, RemoteFile};
 use ironrdp::pdu::PduResult;
 use ironrdp_cliprdr_format::bitmap::{dib_to_png, dibv5_to_png, png_to_cf_dib, png_to_cf_dibv5};
 use tokio::sync::mpsc;
@@ -27,7 +33,13 @@ pub(crate) enum Signal {
     /// The channel is fully set up.
     Ready,
     /// The remote copied something.
-    RemoteCopy(Vec<ClipboardFormatId>),
+    RemoteCopy(Vec<ClipboardFormat>),
+    /// The list of files the remote copied (after we asked for it).
+    RemoteFileList(Vec<FileDescriptor>),
+    /// The remote reads one of our copied files.
+    FileContentsRequest(FileContentsRequest),
+    /// Part of a remote file we're downloading; `None` on error.
+    FileContentsResponse { stream_id: u32, data: Option<Vec<u8>> },
     /// The remote pastes and wants our data.
     DataRequest(ClipboardFormatId),
     /// Data we asked for; `None` if the remote couldn't provide it.
@@ -54,12 +66,16 @@ ironrdp::core::impl_as_any!(Backend);
 
 impl CliprdrBackend for Backend {
     fn temporary_directory(&self) -> &str {
-        // Only used for file transfers, which we don't offer.
+        // Where the remote may say its own files live; not used by Windows for streamed copies.
         ".cliprdr"
     }
 
     fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
         ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES
+            | ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
+            | ClipboardGeneralCapabilityFlags::FILECLIP_NO_FILE_PATHS
+            | ClipboardGeneralCapabilityFlags::CAN_LOCK_CLIPDATA
+            | ClipboardGeneralCapabilityFlags::HUGE_FILE_SUPPORT_ENABLED
     }
 
     fn on_ready(&mut self) {
@@ -73,7 +89,7 @@ impl CliprdrBackend for Backend {
     fn on_process_negotiated_capabilities(&mut self, _capabilities: ClipboardGeneralCapabilityFlags) {}
 
     fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
-        self.signal(Signal::RemoteCopy(available_formats.iter().map(|f| f.id).collect()));
+        self.signal(Signal::RemoteCopy(available_formats.to_vec()));
     }
 
     fn on_format_data_request(&mut self, request: FormatDataRequest) {
@@ -85,9 +101,21 @@ impl CliprdrBackend for Backend {
         self.signal(Signal::DataResponse(data));
     }
 
-    fn on_file_contents_request(&mut self, _request: FileContentsRequest) {}
+    fn on_file_contents_request(&mut self, request: FileContentsRequest) {
+        self.signal(Signal::FileContentsRequest(request));
+    }
 
-    fn on_file_contents_response(&mut self, _response: FileContentsResponse<'_>) {}
+    fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
+        let data = (!response.is_error()).then(|| response.data().to_vec());
+        self.signal(Signal::FileContentsResponse {
+            stream_id: response.stream_id(),
+            data,
+        });
+    }
+
+    fn on_remote_file_list(&mut self, files: &[FileDescriptor], _clip_data_id: Option<u32>) {
+        self.signal(Signal::RemoteFileList(files.to_vec()));
+    }
 
     fn on_lock(&mut self, _data_id: LockDataId) {}
 
@@ -100,11 +128,13 @@ pub struct ClipboardContent {
     pub text: Option<String>,
     /// An image, PNG-encoded.
     pub png: Option<Vec<u8>>,
+    /// Copied files and folders; offered instead of text and images when present.
+    pub files: Vec<PathBuf>,
 }
 
 impl ClipboardContent {
     fn is_empty(&self) -> bool {
-        self.text.is_none() && self.png.is_none()
+        self.text.is_none() && self.png.is_none() && self.files.is_empty()
     }
 }
 
@@ -114,6 +144,8 @@ pub enum RemoteClipboard {
     Text(String),
     /// PNG-encoded.
     Image(Vec<u8>),
+    /// Files and folders, downloaded on paste ([`crate::SessionHandle::fetch_clipboard_files`]).
+    Files(Vec<RemoteFile>),
 }
 
 /// Clipboard state for one session.
@@ -127,6 +159,12 @@ pub(crate) struct Clipboard {
     ready: bool,
     /// The format we asked the remote for.
     awaiting: Option<ClipboardFormatId>,
+    /// Our files on offer, as described to the remote.
+    local_files: LocalFiles,
+    /// The files the remote copied last.
+    remote_files: Option<Vec<FileDescriptor>>,
+    download: Option<Download>,
+    next_stream_id: u32,
 }
 
 /// What handling a signal produced.
@@ -151,6 +189,19 @@ impl Clipboard {
             Signal::RemoteCopy(formats) => {
                 // The remote owns the clipboard now; our earlier announcement is void.
                 self.announced = ClipboardContent::default();
+                self.remote_files = None;
+                // Files first: only their list is fetched now, contents on paste.
+                let file_list = formats.iter().find(|f| {
+                    f.name
+                        .as_ref()
+                        .is_some_and(|n| n.value() == ClipboardFormatName::FILE_LIST.value())
+                });
+                if let Some(file_list) = file_list {
+                    self.awaiting = Some(file_list.id);
+                    outcome.messages = Some(channel.initiate_paste(file_list.id)?);
+                    return Ok(outcome);
+                }
+                let formats: Vec<ClipboardFormatId> = formats.iter().map(|f| f.id).collect();
                 // Text first; otherwise an image (DIBV5 keeps transparency).
                 let wanted = [
                     ClipboardFormatId::CF_UNICODETEXT,
@@ -165,6 +216,25 @@ impl Clipboard {
                         outcome.messages = Some(channel.initiate_paste(format)?);
                     }
                     None => debug!(?formats, "Remote clipboard has nothing we can use"),
+                }
+            }
+            Signal::RemoteFileList(files) => {
+                self.awaiting = None;
+                debug!(count = files.len(), "Remote copied files");
+                outcome.remote = Some(RemoteClipboard::Files(
+                    files.iter().map(RemoteFile::from_descriptor).collect(),
+                ));
+                self.remote_files = Some(files);
+            }
+            Signal::FileContentsRequest(request) => {
+                let response = self.local_files.serve(&request);
+                outcome.messages = Some(channel.submit_file_contents(response)?);
+            }
+            Signal::FileContentsResponse { stream_id, data } => {
+                if let Some(download) = &mut self.download
+                    && download.on_response(stream_id, data)
+                {
+                    outcome.messages = self.continue_download(channel)?;
                 }
             }
             Signal::DataRequest(format) => {
@@ -224,6 +294,52 @@ impl Clipboard {
         }
     }
 
+    /// Downloads the remote's copied files into `dir` (the paste of a file copy).
+    pub(crate) fn fetch_files(
+        &mut self,
+        dir: PathBuf,
+        reply: oneshot::Sender<FetchResult>,
+        channel: &mut CliprdrClient,
+    ) -> PduResult<Option<CliprdrSvcMessages<ironrdp::cliprdr::Client>>> {
+        let Some(files) = self.remote_files.clone() else {
+            let _ = reply.send(Err("the PC's clipboard has no files any more".to_owned()));
+            return Ok(None);
+        };
+        if self.download.is_some() {
+            let _ = reply.send(Err("another paste from the PC is still running".to_owned()));
+            return Ok(None);
+        }
+        match Download::start(dir, files, reply) {
+            Ok(download) => {
+                self.download = Some(download);
+                self.continue_download(channel)
+            }
+            Err((reply, error)) => {
+                let _ = reply.send(Err(error));
+                Ok(None)
+            }
+        }
+    }
+
+    fn continue_download(
+        &mut self,
+        channel: &mut CliprdrClient,
+    ) -> PduResult<Option<CliprdrSvcMessages<ironrdp::cliprdr::Client>>> {
+        let Some(download) = &mut self.download else {
+            return Ok(None);
+        };
+        self.next_stream_id = self.next_stream_id.wrapping_add(1);
+        match download.next_request(self.next_stream_id) {
+            Some(request) => channel.request_file_contents(request).map(Some),
+            None => {
+                if download.finish_if_done() {
+                    self.download = None;
+                }
+                Ok(None)
+            }
+        }
+    }
+
     /// The local clipboard changed.
     pub(crate) fn set_local(
         &mut self,
@@ -247,6 +363,14 @@ impl Clipboard {
     }
 
     fn announce(&mut self, channel: &mut CliprdrClient) -> PduResult<CliprdrSvcMessages<ironrdp::cliprdr::Client>> {
+        self.announced = self.local.clone();
+        if !self.local.files.is_empty() {
+            let (files, descriptors) = LocalFiles::describe(&self.local.files);
+            debug!(count = descriptors.len(), "Offering copied files");
+            self.local_files = files;
+            return channel.initiate_file_copy(descriptors);
+        }
+        self.local_files = LocalFiles::default();
         let mut formats = Vec::new();
         if self.local.text.is_some() {
             formats.push(ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT));
@@ -259,7 +383,6 @@ impl Clipboard {
             trace!("Local clipboard is empty");
         }
         debug!(?formats, "Offering the local clipboard");
-        self.announced = self.local.clone();
         channel.initiate_copy(&formats)
     }
 }

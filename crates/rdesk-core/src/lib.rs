@@ -19,6 +19,7 @@
 
 mod audin;
 pub(crate) mod clipboard;
+mod clipboard_files;
 mod config;
 mod drive;
 mod event;
@@ -31,6 +32,7 @@ mod tls;
 
 pub use audin::{CaptureFormat, Microphone};
 pub use clipboard::{ClipboardContent, RemoteClipboard};
+pub use clipboard_files::{FetchResult, RemoteFile};
 pub use config::{AddressError, AudioOutput, Credentials, Security, SessionConfig, parse_address};
 pub use drive::SharedFolder;
 pub use event::{
