@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <g fill="#222222">
+    <!-- The ring -->
+    <path d="M 8 0.5 a 7.5 7.5 0 1 0 0 15 a 7.5 7.5 0 1 0 0 -15 z m 0 2.5 a 5 5 0 1 1 0 10 a 5 5 0 1 1 0 -10 z"/>
+    <!-- The window seen through it -->
+    <path d="M 5.5 5.5 h 5 a 0.5 0.5 0 0 1 0.5 0.5 v 4 a 0.5 0.5 0 0 1 -0.5 0.5 h -5 a 0.5 0.5 0 0 1 -0.5 -0.5 v -4 a 0.5 0.5 0 0 1 0.5 -0.5 z m 0.5 2 v 2 h 4 v -2 z"/>
+  </g>
+</svg>

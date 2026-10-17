@@ -88,6 +88,16 @@ fn main() -> glib::ExitCode {
         .application_id(APP_ID)
         .flags(gtk4::gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
+    app.connect_startup(|_| {
+        // Installed, the icon comes from the icon theme; run from the source tree, from here.
+        if let Some(display) = gtk4::gdk::Display::default() {
+            let icons = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("data/icons");
+            if icons.is_dir() {
+                gtk4::IconTheme::for_display(&display).add_search_path(icons);
+            }
+        }
+        gtk4::Window::set_default_icon_name(APP_ID);
+    });
     app.connect_command_line(|app, command_line| {
         let args: Vec<String> = command_line
             .arguments()

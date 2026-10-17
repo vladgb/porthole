@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="ring" x1="0" y1="6" x2="0" y2="114" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f6f5f4"/>
+      <stop offset="0.5" stop-color="#c0bfbc"/>
+      <stop offset="1" stop-color="#9a9996"/>
+    </linearGradient>
+    <linearGradient id="lip" x1="0" y1="18" x2="0" y2="102" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5e5c64"/>
+      <stop offset="1" stop-color="#9a9996"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="22" x2="0" y2="98" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#99c1f1"/>
+      <stop offset="0.55" stop-color="#3584e4"/>
+      <stop offset="1" stop-color="#1a5fb4"/>
+    </linearGradient>
+    <radialGradient id="bolt" cx="0.35" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#9a9996"/>
+    </radialGradient>
+    <clipPath id="pane">
+      <circle cx="64" cy="60" r="38"/>
+    </clipPath>
+    <g id="b">
+      <circle cy="1" r="3.5" fill="#77767b"/>
+      <circle r="3.5" fill="url(#bolt)"/>
+    </g>
+  </defs>
+
+  <!-- Body: the ring's thickness, then its face -->
+  <circle cx="64" cy="66" r="54" fill="#5e5c64"/>
+  <circle cx="64" cy="60" r="54" fill="url(#ring)"/>
+
+  <!-- Bolts around the ring -->
+  <g transform="translate(64 60)">
+    <use href="#b" transform="rotate(0) translate(0 -47.5) rotate(0)"/>
+    <use href="#b" transform="rotate(45) translate(0 -47.5) rotate(-45)"/>
+    <use href="#b" transform="rotate(90) translate(0 -47.5) rotate(-90)"/>
+    <use href="#b" transform="rotate(135) translate(0 -47.5) rotate(-135)"/>
+    <use href="#b" transform="rotate(180) translate(0 -47.5) rotate(-180)"/>
+    <use href="#b" transform="rotate(225) translate(0 -47.5) rotate(-225)"/>
+    <use href="#b" transform="rotate(270) translate(0 -47.5) rotate(-270)"/>
+    <use href="#b" transform="rotate(315) translate(0 -47.5) rotate(-315)"/>
+  </g>
+
+  <!-- Recessed lip and the glass -->
+  <circle cx="64" cy="60" r="42" fill="url(#lip)"/>
+  <circle cx="64" cy="60" r="38" fill="url(#glass)"/>
+
+  <!-- The remote desktop seen through the glass -->
+  <g clip-path="url(#pane)">
+    <rect x="39" y="45" width="50" height="36" rx="4" fill="#1c3a66" opacity="0.35"/>
+    <rect x="38" y="42" width="50" height="36" rx="4" fill="#ffffff"/>
+    <path d="M 42 42 h 42 a 4 4 0 0 1 4 4 v 6 h -50 v -6 a 4 4 0 0 1 4 -4 z" fill="#1c71d8"/>
+    <circle cx="82" cy="47" r="2" fill="#ffffff" opacity="0.85"/>
+    <rect x="44" y="58" width="30" height="3.5" rx="1.75" fill="#c0bfbc"/>
+    <rect x="44" y="64.5" width="22" height="3.5" rx="1.75" fill="#c0bfbc"/>
+    <rect x="44" y="71" width="26" height="3.5" rx="1.75" fill="#c0bfbc"/>
+    <path d="M 73 62 l 0 16 l 4 -3.6 l 2.8 6.2 l 3 -1.4 l -2.8 -6 l 5.4 -0.4 z"
+          fill="#ffffff" stroke="#241f31" stroke-width="1.6" stroke-linejoin="round"/>
+  </g>
+
+  <!-- Glass shading and highlight -->
+  <circle cx="64" cy="60" r="37" fill="none" stroke="#000000" stroke-opacity="0.18" stroke-width="2"/>
+  <path d="M 36 54 A 29 29 0 0 1 58 32" fill="none" stroke="#ffffff" stroke-opacity="0.55"
+        stroke-width="4.5" stroke-linecap="round"/>
+</svg>
