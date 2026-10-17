@@ -339,6 +339,15 @@ impl Drop for Capture {
     }
 }
 
+fn serialize(object: Object) -> Result<Vec<u8>, pw::Error> {
+    Ok(
+        spa::pod::serialize::PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &Value::Object(object))
+            .map_err(|_| pw::Error::CreationFailed)?
+            .0
+            .into_inner(),
+    )
+}
+
 /// Bytes per row and number of rows of a tightly packed frame.
 fn packed_rows(mode: VideoMode) -> Option<(usize, usize)> {
     let (width, height) = (mode.width as usize, mode.height as usize);
@@ -410,14 +419,52 @@ fn run(
     let packed = packed_rows(mode);
     let mut frame = Vec::new();
     let mut checked = mode.format != VideoFormat::Mjpg;
+    // Plain memory: cameras otherwise hand out DMA-BUFs, which aren't mapped for reading.
+    let buffers = serialize(Object {
+        type_: spa::sys::SPA_TYPE_OBJECT_ParamBuffers,
+        id: spa::sys::SPA_PARAM_Buffers,
+        properties: vec![Property::new(
+            spa::sys::SPA_PARAM_BUFFERS_dataType,
+            Value::Int((1 << spa::sys::SPA_DATA_MemPtr) | (1 << spa::sys::SPA_DATA_MemFd)),
+        )],
+    })?;
+    let mut frames = 0u64;
+    let mut unmapped = false;
     let _listener = stream
         .add_local_listener_with_user_data(())
+        .state_changed({
+            let target = target.to_owned();
+            move |_, _, old, new| match new {
+                pw::stream::StreamState::Error(e) => warn!(camera = %target, error = %e, "Camera stream failed"),
+                new => debug!(camera = %target, ?old, ?new, "Camera stream"),
+            }
+        })
+        .param_changed(move |stream, _, id, param| {
+            if id == spa::sys::SPA_PARAM_Format
+                && param.is_some()
+                && let Some(buffers) = spa::pod::Pod::from_bytes(&buffers)
+                && let Err(e) = stream.update_params(&mut [buffers])
+            {
+                warn!(error = %e, "Couldn't ask the camera for mappable buffers");
+            }
+        })
         .process(move |stream, _| {
             let Some(mut buffer) = stream.dequeue_buffer() else {
                 return;
             };
             let datas = buffer.datas_mut();
             let Some(data) = datas.first_mut() else { return };
+            if data.data().is_none() {
+                if !unmapped {
+                    unmapped = true;
+                    warn!(kind = ?data.type_(), "Camera frames aren't readable");
+                }
+                return;
+            }
+            frames += 1;
+            if frames == 1 {
+                debug!("First camera frame");
+            }
             let (offset, size, stride) = {
                 let chunk = data.chunk();
                 (
@@ -483,17 +530,11 @@ fn run(
     if let Some(format) = raw_id(mode.format) {
         properties.push(Property::new(spa::sys::SPA_FORMAT_VIDEO_format, Value::Id(Id(format))));
     }
-    let format = spa::pod::serialize::PodSerializer::serialize(
-        std::io::Cursor::new(Vec::new()),
-        &Value::Object(Object {
-            type_: spa::sys::SPA_TYPE_OBJECT_Format,
-            id: spa::sys::SPA_PARAM_EnumFormat,
-            properties,
-        }),
-    )
-    .map_err(|_| pw::Error::CreationFailed)?
-    .0
-    .into_inner();
+    let format = serialize(Object {
+        type_: spa::sys::SPA_TYPE_OBJECT_Format,
+        id: spa::sys::SPA_PARAM_EnumFormat,
+        properties,
+    })?;
     let mut params = [spa::pod::Pod::from_bytes(&format).ok_or(pw::Error::CreationFailed)?];
     stream.connect(
         spa::utils::Direction::Input,
