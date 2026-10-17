@@ -2,10 +2,10 @@
 //!
 //! ```no_run
 //! # async fn demo(runtime: tokio::runtime::Handle) {
-//! use rdesk_core::{Credentials, SessionConfig, SessionEvent};
+//! use porthole_core::{Credentials, SessionConfig, SessionEvent};
 //!
 //! let config = SessionConfig::new("pc.example", Credentials::parse(r"CONTOSO\alice", "secret"));
-//! let (session, events) = rdesk_core::connect(config, &runtime);
+//! let (session, events) = porthole_core::connect(config, &runtime);
 //! while let Ok(event) = events.recv().await {
 //!     match event {
 //!         SessionEvent::CertificatePrompt(prompt) => prompt.reject(),

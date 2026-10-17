@@ -1,4 +1,4 @@
-//! Saved PCs and trusted certificates, kept as TOML files in `$XDG_CONFIG_HOME/rdesk/`.
+//! Saved PCs and trusted certificates, kept as TOML files in `$XDG_CONFIG_HOME/porthole/`.
 //!
 //! Every change is written straight away (to a temporary file that replaces the old one), so a
 //! crash never leaves a half-written file. Passwords are never stored here.
@@ -220,8 +220,8 @@ pub struct Store {
 }
 
 impl Store {
-    /// Opens the store in `$XDG_CONFIG_HOME/rdesk` (or `~/.config/rdesk`).
-    /// Thumbnails go to `$XDG_CACHE_HOME/rdesk/thumbnails` (or `~/.cache/...`).
+    /// Opens the store in `$XDG_CONFIG_HOME/porthole` (or `~/.config/porthole`).
+    /// Thumbnails go to `$XDG_CACHE_HOME/porthole/thumbnails` (or `~/.cache/...`).
     pub fn open_default() -> Result<Self, StoreError> {
         let dir = xdg_dir("XDG_CONFIG_HOME", ".config").ok_or(StoreError::NoConfigDir)?;
         Self::open(dir, xdg_dir("XDG_CACHE_HOME", ".cache").map(|d| d.join("thumbnails")))
@@ -404,13 +404,26 @@ impl Store {
     }
 }
 
-/// `$VAR/rdesk`, or `~/<fallback>/rdesk` when the variable is unset or not absolute.
+/// `$VAR/porthole`, or `~/<fallback>/porthole` when the variable is unset or not absolute.
 fn xdg_dir(var: &str, fallback: &str) -> Option<PathBuf> {
     let base = std::env::var_os(var)
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
         .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(fallback)))?;
-    Some(base.join("rdesk"))
+    Some(app_dir(&base))
+}
+
+/// The app's folder in `base`, taking over the one from before the rename (`rdesk`).
+fn app_dir(base: &Path) -> PathBuf {
+    let dir = base.join("porthole");
+    let legacy = base.join("rdesk");
+    if !dir.exists()
+        && legacy.is_dir()
+        && let Err(e) = fs::rename(&legacy, &dir)
+    {
+        warn!(from = %legacy.display(), to = %dir.display(), error = %e, "Couldn't move the old folder");
+    }
+    dir
 }
 
 fn load<T: DeserializeOwned>(path: &Path, recovered: &mut Vec<Recovered>) -> Result<Option<T>, StoreError> {
@@ -559,10 +572,28 @@ mod tests {
     }
 
     #[test]
+    fn takes_over_the_folder_from_before_the_rename() {
+        let base = tempfile::tempdir().unwrap();
+        Store::open(base.path().join("rdesk"), None)
+            .unwrap()
+            .save_pc(Pc::new("old", 3389))
+            .unwrap();
+        let dir = app_dir(base.path());
+        assert_eq!(dir, base.path().join("porthole"));
+        assert!(!base.path().join("rdesk").exists());
+        assert_eq!(Store::open(&dir, None).unwrap().pcs()[0].host, "old");
+
+        // An existing new folder wins; the old one is left alone.
+        fs::create_dir(base.path().join("rdesk")).unwrap();
+        assert_eq!(app_dir(base.path()), dir);
+        assert!(base.path().join("rdesk").exists());
+    }
+
+    #[test]
     fn files_are_private() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let config = dir.path().join("rdesk");
+        let config = dir.path().join("porthole");
         Store::open(&config, None).unwrap().save_pc(Pc::new("a", 3389)).unwrap();
         let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&config), 0o700);

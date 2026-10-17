@@ -1,5 +1,5 @@
 [package]
-name = "rdesk-store"
+name = "porthole-store"
 description = "Profiles, groups, accounts, gateways, .rdp parsing, and keyring access."
 version.workspace = true
 edition.workspace = true

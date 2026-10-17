@@ -10,10 +10,10 @@ use std::rc::Rc;
 use std::thread::JoinHandle;
 
 use pipewire as pw;
+use porthole_core::{CameraDevice, Cameras, FrameSink, VideoFormat, VideoMode};
 use pw::spa;
 use pw::spa::pod::{ChoiceValue, Object, Property, Value};
 use pw::spa::utils::{ChoiceEnum, Fraction, Id, Rectangle};
-use rdesk_core::{CameraDevice, Cameras, FrameSink, VideoFormat, VideoMode};
 use tracing::{debug, warn};
 
 /// Frame rates above this aren't offered (the PC gets one frame per request anyway).
@@ -23,13 +23,13 @@ const MAX_SIZE: (u32, u32) = (1920, 1080);
 /// Offered for cameras that report a size range instead of fixed sizes.
 const COMMON_SIZES: [(u32, u32); 4] = [(1920, 1080), (1280, 720), (640, 480), (320, 240)];
 
-/// The cameras PipeWire knows about. `RDESK_CAMERA_TARGET` (a node name) limits them to one.
+/// The cameras PipeWire knows about. `PORTHOLE_CAMERA_TARGET` (a node name) limits them to one.
 #[derive(Debug, Default)]
 pub struct PipeWireCameras;
 
 impl Cameras for PipeWireCameras {
     fn devices(&self) -> Vec<CameraDevice> {
-        let only = std::env::var("RDESK_CAMERA_TARGET").ok();
+        let only = std::env::var("PORTHOLE_CAMERA_TARGET").ok();
         match enumerate(only.as_deref()) {
             Ok(devices) => devices,
             Err(e) => {
@@ -315,7 +315,7 @@ impl Capture {
         let (quit, quit_rx) = pw::channel::channel::<()>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
-            .name("rdesk-camera".to_owned())
+            .name("porthole-camera".to_owned())
             .spawn(move || {
                 if let Err(e) = run(&target, mode, sink, quit_rx, &ready_tx) {
                     let _ = ready_tx.send(Err(e));
@@ -410,10 +410,10 @@ fn run(
         *pw::keys::MEDIA_TYPE => "Video",
         *pw::keys::MEDIA_CATEGORY => "Capture",
         *pw::keys::MEDIA_ROLE => "Camera",
-        *pw::keys::APP_NAME => "Remote Desktop",
+        *pw::keys::APP_NAME => "Porthole",
     };
     properties.insert("target.object", target);
-    let stream = pw::stream::StreamBox::new(&core, "Remote Desktop camera", properties)?;
+    let stream = pw::stream::StreamBox::new(&core, "Porthole camera", properties)?;
 
     let target_name = target.to_owned();
     let packed = packed_rows(mode);

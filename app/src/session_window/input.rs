@@ -3,8 +3,8 @@
 use gtk4 as gtk;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
-use rdesk_core::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
-use rdesk_input::{Key, ScrollUnit};
+use porthole_core::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
+use porthole_input::{Key, ScrollUnit};
 use tracing::{debug, warn};
 
 use super::State;
@@ -193,13 +193,13 @@ pub(super) fn keyboard_layout() -> u32 {
         .and_then(|d| d.default_seat())
         .and_then(|seat| seat.keyboard())
     else {
-        return rdesk_input::DEFAULT_LAYOUT;
+        return porthole_input::DEFAULT_LAYOUT;
     };
     // Properties rather than the typed getters, which would raise the minimum GTK to 4.18.
     let has = |name| keyboard.find_property(name).is_some();
     if !has("layout-names") || !has("active-layout-index") {
         debug!("GTK doesn't report keyboard layouts (needs 4.18); using US English");
-        return rdesk_input::DEFAULT_LAYOUT;
+        return porthole_input::DEFAULT_LAYOUT;
     }
     let names: Vec<String> = keyboard
         .property::<glib::StrV>("layout-names")
@@ -209,16 +209,16 @@ pub(super) fn keyboard_layout() -> u32 {
     let active = usize::try_from(keyboard.property::<i32>("active-layout-index")).ok();
     let Some(name) = active.and_then(|i| names.get(i)) else {
         debug!(?names, "Active keyboard layout unknown; using US English");
-        return rdesk_input::DEFAULT_LAYOUT;
+        return porthole_input::DEFAULT_LAYOUT;
     };
-    match rdesk_input::klid_from_layout_name(name) {
+    match porthole_input::klid_from_layout_name(name) {
         Some(klid) => {
             debug!(layout = %name, klid = format_args!("{klid:#010x}"), "Keyboard layout");
             klid
         }
         None => {
             warn!(layout = %name, "No Windows equivalent for the keyboard layout; using US English");
-            rdesk_input::DEFAULT_LAYOUT
+            porthole_input::DEFAULT_LAYOUT
         }
     }
 }
@@ -230,7 +230,7 @@ fn send(state: &State, operations: impl IntoIterator<Item = Operation>) {
 }
 
 fn send_key(state: &State, keycode: u32, pressed: bool) {
-    match rdesk_input::from_xkb_keycode(keycode) {
+    match porthole_input::from_xkb_keycode(keycode) {
         Some(Key::Scancode { code, extended }) => {
             let scancode = Scancode::from_u8(extended, code);
             send(

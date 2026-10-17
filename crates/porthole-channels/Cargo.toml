@@ -1,6 +1,6 @@
 [package]
-name = "rdesk-input"
-description = "Keyboard scancode tables, layouts, and mouse/scroll mapping."
+name = "porthole-channels"
+description = "Virtual channels: clipboard, drives, audio, printers, smart card, camera, display control."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

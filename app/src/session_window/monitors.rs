@@ -8,7 +8,7 @@ use std::rc::Rc;
 use gtk4 as gtk;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
-use rdesk_core::MonitorRect;
+use porthole_core::MonitorRect;
 use tracing::{debug, info};
 
 use super::State;
@@ -136,7 +136,7 @@ fn extra_window(state: &State, app: Option<&gtk::Application>, monitor: &gdk::Mo
         .focusable(true)
         .hexpand(true)
         .vexpand(true)
-        .css_classes(["rdesk-display"])
+        .css_classes(["porthole-display"])
         .build();
     let window = gtk::Window::builder()
         .title(state.window.title().unwrap_or_default())

@@ -31,7 +31,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for RemoteFiles {
-        const NAME: &'static str = "RdeskRemoteFiles";
+        const NAME: &'static str = "PortholeRemoteFiles";
         type Type = super::RemoteFiles;
         type ParentType = gdk::ContentProvider;
     }
@@ -114,10 +114,10 @@ impl RemoteFiles {
     }
 }
 
-/// A fresh folder for one paste, under `$XDG_CACHE_HOME/rdesk/clipboard`. Pastes older than a
+/// A fresh folder for one paste, under `$XDG_CACHE_HOME/porthole/clipboard`. Pastes older than a
 /// day are removed (the pasting app has copied them by then).
 pub(super) fn paste_dir() -> PathBuf {
-    let base = glib::user_cache_dir().join("rdesk").join("clipboard");
+    let base = glib::user_cache_dir().join("porthole").join("clipboard");
     if let Ok(entries) = std::fs::read_dir(&base) {
         let day_ago = SystemTime::now() - Duration::from_secs(24 * 60 * 60);
         for entry in entries.flatten() {

@@ -6,7 +6,7 @@ ironrdp-blocking 0.10, sspi 0.21, rustls/aws-lc).
 ```sh
 docker build -t rdesk-xrdp tests/xrdp
 docker run --rm -d -p 127.0.0.1:13389:3389 --name rdesk-xrdp rdesk-xrdp
-RDESK_PASSWORD=rdesk cargo run -p rdp-screenshot -- --host 127.0.0.1 --port 13389 -u rdesk --no-nla -o out.png
+PORTHOLE_PASSWORD=rdesk cargo run -p rdp-screenshot -- --host 127.0.0.1 --port 13389 -u rdesk --no-nla -o out.png
 ```
 
 ## Results against xrdp (Ubuntu 24.04, xorgxrdp, TLS security)
@@ -42,7 +42,7 @@ docker run -d --name rdesk-win11 --device /dev/kvm --device /dev/net/tun --cap-a
 **Account lockout.** Retrying NLA once a minute while Windows setup was still finishing produced 15+
 `STATUS_LOGON_FAILURE` (0xc000006d) results and locked the account (Windows 11 default: 10 failures in 10 min,
 locked for 10 min). During lockout, NLA still reports `STATUS_LOGON_FAILURE`, not `STATUS_ACCOUNT_LOCKED_OUT`, so the
-two are indistinguishable from the client. Consequences for rdesk:
+two are indistinguishable from the client. Consequences for porthole:
 
 - Auto-reconnect must **never** retry after a CredSSP logon failure; go straight to the credentials prompt.
 - The credentials prompt should mention possible lockout after repeated failures.
@@ -54,20 +54,20 @@ falls back to unofficial ISO mirrors when Microsoft is unreachable; watch for th
 
 ## IronRDP 0.17 coverage (published crates.io set)
 
-| Area | Status | Consequence for rdesk |
+| Area | Status | Consequence for porthole |
 |---|---|---|
 | Connector, TLS, CredSSP (NTLM/Kerberos via sspi) | Present | Use as-is. |
 | Bitmap / planar / interleaved, RemoteFX (`session::rfx`) | Present | MVP graphics covered. |
 | Bulk compression (MPPC/NCRUSH/XCRUSH, `ironrdp-bulk`) | Present | P2 item mostly free. |
-| **EGFX / RDPGFX channel** | **Missing** — only building blocks in `ironrdp-graphics` (ZGFX, ClearCodec, progressive) | Implement the RDPGFX DVC client in `rdesk-gfx` (Phase 2). Biggest owned work item. |
-| **H.264 (AVC420/444)** | **Missing** | `openh264`-based decoder in `rdesk-gfx`, as planned. |
+| **EGFX / RDPGFX channel** | **Missing** — only building blocks in `ironrdp-graphics` (ZGFX, ClearCodec, progressive) | Implement the RDPGFX DVC client in `porthole-gfx` (Phase 2). Biggest owned work item. |
+| **H.264 (AVC420/444)** | **Missing** | `openh264`-based decoder in `porthole-gfx`, as planned. |
 | Display Control (dynamic resolution) | Present (`ironrdp-displaycontrol`) | P1 dynamic resize is cheap. |
-| Clipboard | Protocol present; native backend is **Windows-only** | Write a GTK/Wayland backend in `rdesk-channels` (planned). |
+| Clipboard | Protocol present; native backend is **Windows-only** | Write a GTK/Wayland backend in `porthole-channels` (planned). |
 | RDPDR (drives, smart card) | Protocol + noop backend only | Filesystem/smart-card backends are ours. |
 | RDPSND (audio out) | Present, `cpal` backend in `ironrdp-rdpsnd-native` | Start with it; PipeWire backend later if needed. |
 | AUDIN (mic), camera (RDPECAM), RAIL (RemoteApp) | Not in the published set | Own crates (Phase 3 / Phase 6). |
-| RD Gateway | `ironrdp-mstsgu` **0.0.1**: WebSocket transport only, no HTTP/RPC transport | Wrap/extend in `rdesk-gateway`; HTTP transport is ours. |
-| Server-side Deactivate-All / reactivation | Exposed (`ActiveStageOutput::DeactivateAll`, `activation_factory`) | Needed for resize/reconnect; handle in `rdesk-core`. |
+| RD Gateway | `ironrdp-mstsgu` **0.0.1**: WebSocket transport only, no HTTP/RPC transport | Wrap/extend in `porthole-gateway`; HTTP transport is ours. |
+| Server-side Deactivate-All / reactivation | Exposed (`ActiveStageOutput::DeactivateAll`, `activation_factory`) | Needed for resize/reconnect; handle in `porthole-core`. |
 
 ## Decision
 

@@ -1,5 +1,5 @@
 [package]
-name = "rdesk-audio"
+name = "porthole-audio"
 description = "Remote audio playback (RDPSND) through PipeWire."
 version.workspace = true
 edition.workspace = true

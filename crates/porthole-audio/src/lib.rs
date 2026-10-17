@@ -135,7 +135,7 @@ impl Player {
         let (quit, quit_rx) = pw::channel::channel::<()>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
-            .name("rdesk-audio".to_owned())
+            .name("porthole-audio".to_owned())
             .spawn({
                 let queue = Arc::clone(&queue);
                 move || {
@@ -185,13 +185,13 @@ fn run(
         *pw::keys::MEDIA_TYPE => "Audio",
         *pw::keys::MEDIA_CATEGORY => "Playback",
         *pw::keys::NODE_LATENCY => latency,
-        *pw::keys::APP_NAME => "Remote Desktop",
+        *pw::keys::APP_NAME => "Porthole",
     };
     // Plays to a specific output (node name or serial) instead of the default one.
-    if let Ok(target) = std::env::var("RDESK_AUDIO_TARGET") {
+    if let Ok(target) = std::env::var("PORTHOLE_AUDIO_TARGET") {
         properties.insert("target.object", target);
     }
-    let stream = pw::stream::StreamBox::new(&core, "Remote Desktop", properties)?;
+    let stream = pw::stream::StreamBox::new(&core, "Porthole", properties)?;
 
     let queue = Arc::clone(queue);
     let volume = Arc::clone(volume);
@@ -356,7 +356,7 @@ impl Capture {
         let (quit, quit_rx) = pw::channel::channel::<()>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
-            .name("rdesk-microphone".to_owned())
+            .name("porthole-microphone".to_owned())
             .spawn(move || {
                 if let Err(e) = run_capture(rate, channels, sink, quit_rx, &ready_tx) {
                     let _ = ready_tx.send(Err(e));
@@ -397,15 +397,15 @@ fn run_capture(
         *pw::keys::MEDIA_CATEGORY => "Capture",
         *pw::keys::MEDIA_ROLE => "Communication",
         *pw::keys::NODE_LATENCY => format!("{}/{rate}", rate / 50),
-        *pw::keys::APP_NAME => "Remote Desktop",
+        *pw::keys::APP_NAME => "Porthole",
     };
     // Records from a specific input (node name or serial) instead of the default one. A sink's
     // name records what plays on it.
-    if let Ok(target) = std::env::var("RDESK_MIC_TARGET") {
+    if let Ok(target) = std::env::var("PORTHOLE_MIC_TARGET") {
         properties.insert("target.object", target);
         properties.insert("stream.capture.sink", "true");
     }
-    let stream = pw::stream::StreamBox::new(&core, "Remote Desktop microphone", properties)?;
+    let stream = pw::stream::StreamBox::new(&core, "Porthole microphone", properties)?;
     let _listener = stream
         .add_local_listener_with_user_data(())
         .process(move |stream, _| {

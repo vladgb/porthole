@@ -9,8 +9,8 @@ use adw::prelude::*;
 use gtk4 as gtk;
 use gtk4::{gio, glib};
 use libadwaita as adw;
-use rdesk_core::Credentials;
-use rdesk_store::{Layout, Pc, Settings, SortOrder, Uuid, keyring};
+use porthole_core::Credentials;
+use porthole_store::{Layout, Pc, Settings, SortOrder, Uuid, keyring};
 
 use crate::dialogs;
 use crate::session_window::{SessionWindow, Target};
@@ -132,7 +132,7 @@ impl ConnectionCenter {
 
         let window = adw::ApplicationWindow::builder()
             .application(app)
-            .title("Remote Desktop")
+            .title("Porthole")
             .default_width(1000)
             .default_height(700)
             .content(&toolbar)
@@ -167,7 +167,7 @@ impl ConnectionCenter {
             entry,
             #[weak]
             error,
-            move |_| match rdesk_core::parse_address(&entry.text()) {
+            move |_| match porthole_core::parse_address(&entry.text()) {
                 Ok((host, port)) => {
                     glib::spawn_future_local(quick_connect(window, host, port, None));
                 }
@@ -414,7 +414,7 @@ fn list(pcs: &[&Pc]) -> gtk::ListBox {
 const THUMBNAIL_WIDTH: i32 = 240;
 const THUMBNAIL_HEIGHT: i32 = 150;
 
-fn grid(store: &rdesk_store::Store, pcs: &[&Pc]) -> gtk::FlowBox {
+fn grid(store: &porthole_store::Store, pcs: &[&Pc]) -> gtk::FlowBox {
     let grid = gtk::FlowBox::builder()
         .selection_mode(gtk::SelectionMode::None)
         .homogeneous(true)
@@ -541,7 +541,7 @@ pub fn launch(app: &adw::Application, launch: crate::Launch) {
         .unwrap_or_else(|| ConnectionCenter::new(app));
     window.present();
     let Some(address) = launch.address else { return };
-    match rdesk_core::parse_address(&address) {
+    match porthole_core::parse_address(&address) {
         Ok((host, port)) => {
             glib::spawn_future_local(quick_connect(window, host, port, launch.user));
         }

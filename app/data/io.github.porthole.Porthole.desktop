@@ -1,8 +1,10 @@
 [Desktop Entry]
-Name=Remote Desktop
+Name=Porthole
+GenericName=Remote Desktop Client
 Comment=Connect to Windows PCs and virtual desktops
-Exec=rdesk %U
-Icon=io.github.rdesk.Rdesk
+Keywords=RDP;Remote;Desktop;Windows;
+Exec=porthole %U
+Icon=io.github.porthole.Porthole
 Terminal=false
 Type=Application
 Categories=Network;RemoteAccess;GTK;

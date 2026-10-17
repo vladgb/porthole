@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gtk4 as gtk;
 use gtk4::prelude::*;
 use gtk4::{gdk, gio, glib};
-use rdesk_core::input::{Operation, Scancode};
+use porthole_core::input::{Operation, Scancode};
 use tracing::debug;
 
 use super::State;

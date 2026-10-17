@@ -181,7 +181,7 @@ fn default_client_name() -> String {
         .ok()
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "rdesk".to_owned());
+        .unwrap_or_else(|| "porthole".to_owned());
     name.chars().take(15).collect()
 }
 

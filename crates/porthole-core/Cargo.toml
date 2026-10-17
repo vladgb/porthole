@@ -1,5 +1,5 @@
 [package]
-name = "rdesk-core"
+name = "porthole-core"
 description = "Session engine: connect, run loop, and events. UI-agnostic."
 version.workspace = true
 edition.workspace = true

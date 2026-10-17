@@ -16,12 +16,12 @@ use adw::prelude::*;
 use gtk4 as gtk;
 use gtk4::{cairo, gdk, gio, glib};
 use libadwaita as adw;
-use rdesk_core::{
+use porthole_core::{
     CertificateInfo, CertificateProblem, Credentials, DisconnectReason, PointerEvent, Security, SessionConfig,
     SessionEvent, SessionHandle,
 };
-use rdesk_input::ScrollAccumulator;
-use rdesk_store::{CertificateTrust, Uuid, keyring};
+use porthole_input::ScrollAccumulator;
+use porthole_store::{CertificateTrust, Uuid, keyring};
 use tracing::{debug, warn};
 
 use crate::dialogs::{self, CertificateDecision};
@@ -81,7 +81,7 @@ struct Inner {
     main_area: Cell<Option<monitors::Area>>,
     extra_views: RefCell<Vec<Rc<monitors::ExtraView>>>,
     /// The monitors asked for while spanning, and the scale.
-    span_layout: RefCell<Option<(Vec<rdesk_core::MonitorRect>, u32)>>,
+    span_layout: RefCell<Option<(Vec<porthole_core::MonitorRect>, u32)>>,
     shared_folders: Vec<std::path::PathBuf>,
     save_password: Cell<bool>,
     password_saved: Cell<bool>,
@@ -180,7 +180,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         .hexpand(true)
         .vexpand(true)
         .build();
-    picture.add_css_class("rdesk-display");
+    picture.add_css_class("porthole-display");
 
     let reconnect = gtk::Button::builder()
         .label("Reconnect")
@@ -218,7 +218,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         .build();
     // A black background around the scaled desktop instead of the window colour.
     let css = gtk::CssProvider::new();
-    css.load_from_string(".rdesk-display { background: black; }");
+    css.load_from_string(".porthole-display { background: black; }");
     gtk::style_context_add_provider_for_display(
         &gtk::prelude::WidgetExt::display(&window),
         &css,
@@ -345,20 +345,20 @@ fn start(state: &State) {
     config.clipboard = state.clipboard;
     config.graphics_pipeline = !state.best_quality;
     if state.microphone {
-        let microphone: rdesk_core::Microphone = Arc::new(|format, sink| {
-            rdesk_audio::Capture::start(format.sample_rate, format.channels, sink)
+        let microphone: porthole_core::Microphone = Arc::new(|format, sink| {
+            porthole_audio::Capture::start(format.sample_rate, format.channels, sink)
                 .map(|capture| Box::new(capture) as Box<dyn Send>)
                 .map_err(|e| e.to_string())
         });
         config.microphone = Some(microphone);
     }
     if state.camera {
-        config.camera = Some(Arc::new(rdesk_camera::PipeWireCameras));
+        config.camera = Some(Arc::new(porthole_camera::PipeWireCameras));
     }
     config.shared_folders = state
         .shared_folders
         .iter()
-        .map(|path| rdesk_core::SharedFolder {
+        .map(|path| porthole_core::SharedFolder {
             name: path
                 .file_name()
                 .map_or_else(|| "Folder".to_owned(), |n| n.to_string_lossy().into_owned()),
@@ -366,11 +366,11 @@ fn start(state: &State) {
         })
         .collect();
     if state.audio {
-        let output: rdesk_core::AudioOutput = Arc::new(|| Box::new(rdesk_audio::PipeWireOutput::new()));
+        let output: porthole_core::AudioOutput = Arc::new(|| Box::new(porthole_audio::PipeWireOutput::new()));
         config.audio = Some(output);
     }
 
-    let (session, events) = rdesk_core::connect(config, crate::runtime().handle());
+    let (session, events) = porthole_core::connect(config, crate::runtime().handle());
     state.session.replace(Some(session));
     state.texture.replace(None);
     state.picture.set_paintable(None::<&gdk::Paintable>);
@@ -566,7 +566,7 @@ fn save_password(state: &State) {
     let credentials = state.credentials.borrow();
     let username = account_name(&credentials);
     let password = zeroize::Zeroizing::new(credentials.password.clone());
-    let label = format!("Remote Desktop password for {}", state.title.title());
+    let label = format!("Porthole password for {}", state.title.title());
     let weak = Rc::downgrade(state);
     glib::spawn_future_local(async move {
         let stored = crate::on_runtime(async move { keyring::store_password(id, &username, &label, &password).await });
@@ -700,10 +700,10 @@ fn upload(state: &State) {
     debug_dump_views(state);
 }
 
-/// For tests on headless displays: `RDESK_DEBUG_VIEWS_DIR` gets each window's picture as
+/// For tests on headless displays: `PORTHOLE_DEBUG_VIEWS_DIR` gets each window's picture as
 /// `view-N.png` (N = 0 for the session window).
 fn debug_dump_views(state: &State) {
-    let Some(dir) = std::env::var_os("RDESK_DEBUG_VIEWS_DIR") else {
+    let Some(dir) = std::env::var_os("PORTHOLE_DEBUG_VIEWS_DIR") else {
         return;
     };
     let dir = std::path::PathBuf::from(dir);
@@ -720,7 +720,7 @@ fn debug_dump_views(state: &State) {
 /// bytes; only the changed parts are uploaded when the view's previous texture is reusable.
 /// `None` when the view has nothing new.
 fn view_texture(
-    damage: &rdesk_core::Damage<'_>,
+    damage: &porthole_core::Damage<'_>,
     bytes: &glib::Bytes,
     area: Option<monitors::Area>,
     previous: Option<&gdk::Texture>,

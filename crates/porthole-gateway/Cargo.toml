@@ -1,5 +1,5 @@
 [package]
-name = "rdesk-gateway"
+name = "porthole-gateway"
 description = "RD Gateway (HTTP / WebSocket / UDP) transport."
 version.workspace = true
 edition.workspace = true

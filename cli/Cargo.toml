@@ -1,13 +1,13 @@
 [package]
-name = "rdesk-cli"
-description = "Headless/debug command line for rdesk"
+name = "porthole-cli"
+description = "Headless/debug command line for porthole"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rdesk-core.workspace = true
+porthole-core.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 clap.workspace = true

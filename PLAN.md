@@ -6,7 +6,7 @@ connection center, saved PCs with thumbnails, account and gateway managers,
 dynamic resolution, multi-monitor, device redirection, and Azure Virtual
 Desktop / Windows 365 workspaces.
 
-Working name: **`rdesk`** (rename freely).
+Name: **Porthole** (binary `porthole`; called `rdesk` until 2026-10-17).
 
 ---
 
@@ -40,7 +40,7 @@ Working name: **`rdesk`** (rename freely).
 | Video codecs | `openh264` crate (AVC420/444), optional VA-API via `gstreamer` or `ffmpeg-next` | Needed for the RDPGFX (EGFX) H.264 path used by modern Windows. |
 | Audio out / in | `pipewire` crate (fallback `cpal`) | RDPSND (playback) + AUDIN (microphone). |
 | Secrets | `oo7` (Secret Service / Flatpak portal) | GNOME Keyring, KWallet via Secret Service. |
-| Config | `serde` + TOML in `$XDG_CONFIG_HOME/rdesk/` | Plus `.rdp` file import/export. |
+| Config | `serde` + TOML in `$XDG_CONFIG_HOME/porthole/` | Plus `.rdp` file import/export. |
 | Smart cards | `pcsc` crate | Smart card redirection (RDPDR) + smart-card NLA later. |
 | Camera | PipeWire camera portal | RDP camera redirection (MS-RDPECAM). |
 | Logging | `tracing` + `tracing-subscriber` | Per-session log files for diagnostics. |
@@ -62,19 +62,19 @@ Working name: **`rdesk`** (rename freely).
 linux-rdp-client/
 ├── Cargo.toml                  # workspace
 ├── crates/
-│   ├── rdesk-core/             # session engine: connect, run loop, events (no UI)
-│   ├── rdesk-gfx/              # framebuffer, codecs (RemoteFX, H.264/EGFX), surfaces
-│   ├── rdesk-input/            # keyboard scancode tables, layouts, mouse/scroll mapping
-│   ├── rdesk-channels/         # clipboard, drives, audio, printers, smartcard, camera, display-control
-│   ├── rdesk-store/            # profiles, groups, accounts, gateways, .rdp parser, keyring
-│   ├── rdesk-workspaces/       # AVD / W365 / RD Web feed discovery, Entra ID auth
-│   └── rdesk-gateway/          # RD Gateway (HTTP / WebSocket / UDP) transport
-├── app/                        # GTK4/libadwaita application (binary `rdesk`)
+│   ├── porthole-core/          # session engine: connect, run loop, events (no UI)
+│   ├── porthole-gfx/           # framebuffer, codecs (RemoteFX, H.264/EGFX), surfaces
+│   ├── porthole-input/         # keyboard scancode tables, layouts, mouse/scroll mapping
+│   ├── porthole-channels/      # clipboard, drives, audio, printers, smartcard, camera, display-control
+│   ├── porthole-store/         # profiles, groups, accounts, gateways, .rdp parser, keyring
+│   ├── porthole-workspaces/    # AVD / W365 / RD Web feed discovery, Entra ID auth
+│   └── porthole-gateway/       # RD Gateway (HTTP / WebSocket / UDP) transport
+├── app/                        # GTK4/libadwaita application (binary `porthole`)
 │   ├── src/connection_center/  # PCs / Workspaces grid, search, groups
 │   ├── src/session_window/     # remote display widget, fullscreen, toolbar
 │   ├── src/dialogs/            # add/edit PC, accounts, gateways, certificate, prefs
 │   └── data/                   # .desktop, icons, metainfo, gschema
-├── cli/                        # optional `rdesk-cli` (headless/debug, .rdp launch)
+├── cli/                        # optional `porthole-cli` (headless/debug, .rdp launch)
 └── packaging/                  # flatpak manifest, deb/rpm metadata
 ```
 
@@ -96,10 +96,10 @@ linux-rdp-client/
   once per frame clock tick.
 - Each session is fully isolated: a crash/panic in one session task is caught and
   surfaced as a disconnect, not an app crash.
-- `rdesk-core` exposes a UI-agnostic API (`Session::connect(config) -> (handle, events)`),
+- `porthole-core` exposes a UI-agnostic API (`Session::connect(config) -> (handle, events)`),
   so the CLI and tests can drive it without GTK.
 
-### 3.3 Data model (rdesk-store)
+### 3.3 Data model (porthole-store)
 
 - `PcProfile` — id, hostname[:port], friendly name, group, account ref, gateway ref,
   display/devices/audio/folders settings, thumbnail path, last-connected.
@@ -258,7 +258,7 @@ Priority: **P0** = MVP, **P1** = v1.0 parity, **P2** = post-1.0.
 - [P1] User Accounts manager (add/edit/delete; username, password, friendly name).
 - [P1] Import `.rdp` files (drag-and-drop onto the window, or "Open with").
 - [P1] Export PC(s) to `.rdp`.
-- [P1] Launch directly from `.rdp` file (`rdesk file.rdp`, MIME association).
+- [P1] Launch directly from `.rdp` file (`porthole file.rdp`, MIME association).
 - [P1] URI scheme handler: `rdp://` and `ms-rd:` (`ms-rd:subscribe?url=…`).
 - [P2] Backup/restore all settings (bookmarks + accounts without passwords).
 - [P2] Import from Remmina / KRDC profiles.
@@ -281,8 +281,8 @@ Priority: **P0** = MVP, **P1** = v1.0 parity, **P2** = post-1.0.
 - [P2] Background "running sessions" indicator.
 
 ### 4.15 Command line
-- [P1] `rdesk <host|file.rdp|uri>` opens a session directly.
-- [P2] `rdesk-cli` for headless connect tests, screenshot, `.rdp` validation, debugging.
+- [P1] `porthole <host|file.rdp|uri>` opens a session directly.
+- [P2] `porthole-cli` for headless connect tests, screenshot, `.rdp` validation, debugging.
 
 ---
 
@@ -299,8 +299,8 @@ Rough sizing assumes one experienced Rust developer; parallelize where possible.
 - Test lab: Windows 11 Pro VM, Windows Server 2022 with RDS + RD Gateway, xrdp box.
 
 ### Phase 1 — MVP (4–6 weeks) → all **P0** items
-- `rdesk-core`: connect, TLS, NLA (NTLM), bitmap/fast-path, input, disconnect handling.
-- `rdesk-input`: evdev → scancode table, mouse/wheel.
+- `porthole-core`: connect, TLS, NLA (NTLM), bitmap/fast-path, input, disconnect handling.
+- `porthole-input`: evdev → scancode table, mouse/wheel.
 - `app`: connection center (list), add/edit PC, quick connect, session window, fullscreen.
 - Certificate trust dialog + trusted-fingerprint store.
 - Text clipboard.
@@ -342,7 +342,7 @@ Rough sizing assumes one experienced Rust developer; parallelize where possible.
 
 - **Unit tests:** scancode tables, `.rdp` parser round-trips, config migrations, clipboard format conversion.
 - **Property/fuzz tests:** `.rdp` parser, any PDU encoders/decoders we add (`proptest`, `cargo-fuzz`).
-- **Integration tests:** `rdesk-core` against an `xrdp` container in CI (connect, frame, input, clipboard);
+- **Integration tests:** `porthole-core` against an `xrdp` container in CI (connect, frame, input, clipboard);
   Windows VM matrix run nightly/manually (Win 10, Win 11, Server 2019/2022/2025, with/without NLA, via gateway).
 - **UI tests:** screenshot smoke tests under headless Weston/Mutter.
 - **Performance budget:** <16 ms frame present at 4K/60 on integrated GPU; input-to-send latency <5 ms;
@@ -366,11 +366,11 @@ Rough sizing assumes one experienced Rust developer; parallelize where possible.
 
 Status 2026-10-14: steps 1–4 done; spike verified against xrdp and Windows 11 Pro with NLA (see `docs/phase0-ironrdp-spike.md`). GTK4 texture spike done (see `docs/phase0-gtk-texture-spike.md`): memory textures hold 60 fps at 1080p; 4K needs the Phase 2 GL/dmabuf path.
 
-Phase 1 progress (2026-10-15): `rdesk-core` session engine, `rdesk-input` key table, `rdesk-cli screenshot`, and the app's quick connect → sign-in → certificate prompt → session window (rendering, keyboard, mouse, wheel, remote cursor, full screen, readable disconnect reasons) work against Windows 11 with NLA. `rdesk-store` keeps saved PCs (add/edit/remove, per-PC NLA switch) and "always trust" certificate fingerprints per host:port as TOML in `$XDG_CONFIG_HOME/rdesk/`. The keyboard layout announced to the PC follows the active local layout (XKB name → Windows KLID). Text clipboard is shared both ways over CLIPRDR (per-PC switch). Phase 1 feature-complete; next is Phase 2.
+Phase 1 progress (2026-10-15): `porthole-core` session engine, `porthole-input` key table, `porthole-cli screenshot`, and the app's quick connect → sign-in → certificate prompt → session window (rendering, keyboard, mouse, wheel, remote cursor, full screen, readable disconnect reasons) work against Windows 11 with NLA. `porthole-store` keeps saved PCs (add/edit/remove, per-PC NLA switch) and "always trust" certificate fingerprints per host:port as TOML in `$XDG_CONFIG_HOME/porthole/`. The keyboard layout announced to the PC follows the active local layout (XKB name → Windows KLID). Text clipboard is shared both ways over CLIPRDR (per-PC switch). Phase 1 feature-complete; next is Phase 2.
 
-Phase 2/3 progress (2026-10-15): dynamic resolution with HiDPI scale (Display Control DVC), Send Keys menu + full-screen shortcut inhibition, automatic reconnection, grid/list of saved PCs with last-session thumbnails, groups, search and sort, passwords in the keyring (oo7), audio playback via PipeWire (RDPSND, new `rdesk-audio` crate). Not started: EGFX/H.264, multi-monitor, microphone, clipboard images/files, drive/printer/smart-card redirection, Kerberos, `.rdp` import/export + URI handler, gateways, packaging.
+Phase 2/3 progress (2026-10-15): dynamic resolution with HiDPI scale (Display Control DVC), Send Keys menu + full-screen shortcut inhibition, automatic reconnection, grid/list of saved PCs with last-session thumbnails, groups, search and sort, passwords in the keyring (oo7), audio playback via PipeWire (RDPSND, new `porthole-audio` crate). Not started: EGFX/H.264, multi-monitor, microphone, clipboard images/files, drive/printer/smart-card redirection, Kerberos, `.rdp` import/export + URI handler, gateways, packaging.
 
-Progress (2026-10-16): EGFX with H.264 (OpenH264 loaded at run time; BT.709 full-range colour), per-PC "Picture Quality" (Balanced = H.264, Best = lossless bitmap codecs), all-monitor full screen, microphone (AUDIN), clipboard images and files, shared folders (RDPDR drives), Kerberos, full-screen corner button, smooth audio (jitter buffer; vendored `ironrdp-rdpsnd` fixes the format index mix-up), and camera redirection (MS-RDPECAM v1 over PipeWire, new `rdesk-camera` crate; MJPEG/YUY2/NV12 passed through, per-PC "Use Camera"). Not started: printers, smart cards, `.rdp` import/export + URI handler, packaging. RD Gateway is a future enhancement.
+Progress (2026-10-16): EGFX with H.264 (OpenH264 loaded at run time; BT.709 full-range colour), per-PC "Picture Quality" (Balanced = H.264, Best = lossless bitmap codecs), all-monitor full screen, microphone (AUDIN), clipboard images and files, shared folders (RDPDR drives), Kerberos, full-screen corner button, smooth audio (jitter buffer; vendored `ironrdp-rdpsnd` fixes the format index mix-up), and camera redirection (MS-RDPECAM v1 over PipeWire, new `porthole-camera` crate; MJPEG/YUY2/NV12 passed through, per-PC "Use Camera"). Not started: printers, smart cards, `.rdp` import/export + URI handler, packaging. RD Gateway is a future enhancement.
 
 1. Install Rust: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`.
 2. Install system deps (Ubuntu): `sudo apt install libgtk-4-dev libadwaita-1-dev libpipewire-0.3-dev libpcsclite-dev pkg-config clang`.

@@ -6,7 +6,7 @@ use std::rc::Rc;
 use gtk4::prelude::*;
 use gtk4::{gdk, glib};
 use libadwaita as adw;
-use rdesk_core::{ClipboardContent, RemoteClipboard};
+use porthole_core::{ClipboardContent, RemoteClipboard};
 use tracing::{debug, warn};
 
 use super::{State, remote_files};

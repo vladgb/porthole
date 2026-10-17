@@ -3199,6 +3199,113 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
+name = "porthole"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gtk4",
+ "libadwaita",
+ "porthole-audio",
+ "porthole-camera",
+ "porthole-core",
+ "porthole-input",
+ "porthole-store",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zeroize",
+]
+
+[[package]]
+name = "porthole-audio"
+version = "0.1.0"
+dependencies = [
+ "ironrdp-rdpsnd",
+ "pipewire",
+ "tracing",
+]
+
+[[package]]
+name = "porthole-camera"
+version = "0.1.0"
+dependencies = [
+ "pipewire",
+ "porthole-core",
+ "tracing",
+]
+
+[[package]]
+name = "porthole-channels"
+version = "0.1.0"
+
+[[package]]
+name = "porthole-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "image",
+ "porthole-core",
+ "rpassword",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "porthole-core"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "ironrdp",
+ "ironrdp-cliprdr-format",
+ "ironrdp-egfx",
+ "ironrdp-tokio",
+ "openh264",
+ "rustix",
+ "rustls-native-certs",
+ "sha2 0.10.9",
+ "sspi",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "url",
+ "x509-cert",
+]
+
+[[package]]
+name = "porthole-gateway"
+version = "0.1.0"
+
+[[package]]
+name = "porthole-gfx"
+version = "0.1.0"
+
+[[package]]
+name = "porthole-input"
+version = "0.1.0"
+
+[[package]]
+name = "porthole-store"
+version = "0.1.0"
+dependencies = [
+ "oo7",
+ "serde",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "tracing",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "porthole-workspaces"
+version = "0.1.0"
+
+[[package]]
 name = "portpicker"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3392,113 +3499,6 @@ checksum = "ceda21af1ae61033b63175653a1af86cae399d79cd03ca80ba347eb3a6c4a7fe"
 dependencies = [
  "cipher 0.5.2",
 ]
-
-[[package]]
-name = "rdesk"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "gtk4",
- "libadwaita",
- "rdesk-audio",
- "rdesk-camera",
- "rdesk-core",
- "rdesk-input",
- "rdesk-store",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "zeroize",
-]
-
-[[package]]
-name = "rdesk-audio"
-version = "0.1.0"
-dependencies = [
- "ironrdp-rdpsnd",
- "pipewire",
- "tracing",
-]
-
-[[package]]
-name = "rdesk-camera"
-version = "0.1.0"
-dependencies = [
- "pipewire",
- "rdesk-core",
- "tracing",
-]
-
-[[package]]
-name = "rdesk-channels"
-version = "0.1.0"
-
-[[package]]
-name = "rdesk-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "image",
- "rdesk-core",
- "rpassword",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "rdesk-core"
-version = "0.1.0"
-dependencies = [
- "async-channel",
- "ironrdp",
- "ironrdp-cliprdr-format",
- "ironrdp-egfx",
- "ironrdp-tokio",
- "openh264",
- "rustix",
- "rustls-native-certs",
- "sha2 0.10.9",
- "sspi",
- "tempfile",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "tracing",
- "url",
- "x509-cert",
-]
-
-[[package]]
-name = "rdesk-gateway"
-version = "0.1.0"
-
-[[package]]
-name = "rdesk-gfx"
-version = "0.1.0"
-
-[[package]]
-name = "rdesk-input"
-version = "0.1.0"
-
-[[package]]
-name = "rdesk-store"
-version = "0.1.0"
-dependencies = [
- "oo7",
- "serde",
- "tempfile",
- "thiserror",
- "toml",
- "tracing",
- "uuid",
- "zeroize",
-]
-
-[[package]]
-name = "rdesk-workspaces"
-version = "0.1.0"
 
 [[package]]
 name = "rdp-screenshot"

@@ -1,5 +1,5 @@
 [package]
-name = "rdesk-camera"
+name = "porthole-camera"
 description = "Local cameras for webcam redirection (MS-RDPECAM), through PipeWire."
 version.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 pipewire.workspace = true
-rdesk-core.workspace = true
+porthole-core.workspace = true
 tracing.workspace = true
 
 [lints]

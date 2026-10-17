@@ -10,7 +10,7 @@ use adw::prelude::*;
 use gtk4::glib;
 use libadwaita as adw;
 
-const APP_ID: &str = "io.github.rdesk.Rdesk";
+const APP_ID: &str = "io.github.porthole.Porthole";
 
 /// One multi-threaded runtime for all sessions; GTK stays on the main thread.
 fn runtime() -> &'static tokio::runtime::Runtime {
@@ -18,7 +18,7 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
-            .thread_name("rdesk-session")
+            .thread_name("porthole-session")
             .enable_all()
             .build()
             .expect("failed to start the tokio runtime")
@@ -27,7 +27,7 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 
 /// Saved PCs and trusted certificates. GTK main thread only.
 pub struct Config {
-    pub store: RefCell<rdesk_store::Store>,
+    pub store: RefCell<porthole_store::Store>,
     /// Shown once in the main window: why the saved configuration couldn't be (fully) loaded.
     pub problem: RefCell<Option<String>>,
 }
@@ -50,7 +50,7 @@ where
 }
 
 fn open_config() -> Config {
-    let (store, problem) = match rdesk_store::Store::open_default() {
+    let (store, problem) = match porthole_store::Store::open_default() {
         Ok(store) => {
             let problem = store.recovered().first().map(|r| {
                 let name = |p: &std::path::Path| p.file_name().unwrap_or_default().to_string_lossy().into_owned();
@@ -65,7 +65,7 @@ fn open_config() -> Config {
         Err(e) => {
             tracing::warn!(error = %e, "Saved PCs unavailable");
             (
-                rdesk_store::Store::in_memory(),
+                porthole_store::Store::in_memory(),
                 Some(format!("Saved PCs are unavailable: {e}. Changes won't be saved.")),
             )
         }
@@ -79,7 +79,7 @@ fn open_config() -> Config {
 fn main() -> glib::ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("RDESK_LOG").unwrap_or_else(|_| "info,sspi=warn".into()),
+            tracing_subscriber::EnvFilter::try_from_env("PORTHOLE_LOG").unwrap_or_else(|_| "info,sspi=warn".into()),
         )
         .compact()
         .init();
@@ -101,7 +101,7 @@ fn main() -> glib::ExitCode {
                 glib::ExitCode::SUCCESS
             }
             Err(message) => {
-                eprint!("{message}\nUsage: rdesk [HOST[:PORT]] [-u|--user USER]\n");
+                eprint!("{message}\nUsage: porthole [HOST[:PORT]] [-u|--user USER]\n");
                 glib::ExitCode::FAILURE
             }
         }

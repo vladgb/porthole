@@ -1,30 +1,30 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/rdesk-core",
-    "crates/rdesk-gfx",
-    "crates/rdesk-input",
-    "crates/rdesk-channels",
-    "crates/rdesk-store",
-    "crates/rdesk-workspaces",
-    "crates/rdesk-gateway",
-    "crates/rdesk-audio",
-    "crates/rdesk-camera",
+    "crates/porthole-core",
+    "crates/porthole-gfx",
+    "crates/porthole-input",
+    "crates/porthole-channels",
+    "crates/porthole-store",
+    "crates/porthole-workspaces",
+    "crates/porthole-gateway",
+    "crates/porthole-audio",
+    "crates/porthole-camera",
     "app",
     "cli",
     "spikes/rdp-screenshot",
     "spikes/gtk-texture",
 ]
-# `app`, `rdesk-audio`, `rdesk-camera` and `spikes/gtk-texture` need system libraries (GTK4/libadwaita, PipeWire + libclang);
+# `app`, `porthole-audio`, `porthole-camera` and `spikes/gtk-texture` need system libraries (GTK4/libadwaita, PipeWire + libclang);
 # everything else builds with only a Rust toolchain.
 default-members = [
-    "crates/rdesk-core",
-    "crates/rdesk-gfx",
-    "crates/rdesk-input",
-    "crates/rdesk-channels",
-    "crates/rdesk-store",
-    "crates/rdesk-workspaces",
-    "crates/rdesk-gateway",
+    "crates/porthole-core",
+    "crates/porthole-gfx",
+    "crates/porthole-input",
+    "crates/porthole-channels",
+    "crates/porthole-store",
+    "crates/porthole-workspaces",
+    "crates/porthole-gateway",
     "cli",
     "spikes/rdp-screenshot",
 ]
@@ -33,20 +33,20 @@ default-members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/OWNER/rdesk"
+repository = "https://github.com/OWNER/porthole"
 rust-version = "1.88"
 
 [workspace.dependencies]
 # Internal crates
-rdesk-core = { path = "crates/rdesk-core" }
-rdesk-gfx = { path = "crates/rdesk-gfx" }
-rdesk-input = { path = "crates/rdesk-input" }
-rdesk-channels = { path = "crates/rdesk-channels" }
-rdesk-store = { path = "crates/rdesk-store" }
-rdesk-workspaces = { path = "crates/rdesk-workspaces" }
-rdesk-gateway = { path = "crates/rdesk-gateway" }
-rdesk-audio = { path = "crates/rdesk-audio" }
-rdesk-camera = { path = "crates/rdesk-camera" }
+porthole-core = { path = "crates/porthole-core" }
+porthole-gfx = { path = "crates/porthole-gfx" }
+porthole-input = { path = "crates/porthole-input" }
+porthole-channels = { path = "crates/porthole-channels" }
+porthole-store = { path = "crates/porthole-store" }
+porthole-workspaces = { path = "crates/porthole-workspaces" }
+porthole-gateway = { path = "crates/porthole-gateway" }
+porthole-audio = { path = "crates/porthole-audio" }
+porthole-camera = { path = "crates/porthole-camera" }
 
 # RDP stack. sspi/x509-cert are pinned to the versions ironrdp-connector 0.10 uses.
 ironrdp = { version = "0.17", features = ["core", "connector", "session", "graphics", "pdu", "input", "svc", "dvc", "cliprdr", "displaycontrol", "rdpsnd", "rdpdr"] }

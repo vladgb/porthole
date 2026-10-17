@@ -4,8 +4,8 @@ use adw::prelude::*;
 use gtk4 as gtk;
 use gtk4::glib;
 use libadwaita as adw;
-use rdesk_core::{CertificateInfo, CertificateProblem, Credentials};
-use rdesk_store::Pc;
+use porthole_core::{CertificateInfo, CertificateProblem, Credentials};
+use porthole_store::Pc;
 
 /// What the sign-in dialog returns.
 pub struct SignIn {
@@ -314,7 +314,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
         error,
         move |row: &adw::EntryRow| {
             let text = row.text();
-            let result = rdesk_core::parse_address(&text);
+            let result = porthole_core::parse_address(&text);
             dialog.set_response_enabled("save", result.is_ok());
             match result {
                 Err(e) if !text.trim().is_empty() => {
@@ -332,7 +332,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     if dialog.choose_future(Some(parent)).await != "save" {
         return None;
     }
-    let (host, port) = rdesk_core::parse_address(&address_row.text()).ok()?;
+    let (host, port) = porthole_core::parse_address(&address_row.text()).ok()?;
     let mut saved = pc.cloned().unwrap_or_else(|| Pc::new(host.clone(), port));
     saved.host = host;
     saved.port = port;

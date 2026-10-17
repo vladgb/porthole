@@ -1,6 +1,6 @@
 [package]
-name = "rdesk-gfx"
-description = "Framebuffer, codecs (RemoteFX, H.264/EGFX), and surfaces."
+name = "porthole-input"
+description = "Keyboard scancode tables, layouts, and mouse/scroll mapping."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

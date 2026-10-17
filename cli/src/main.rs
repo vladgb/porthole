@@ -1,7 +1,7 @@
-//! `rdesk-cli`: drive `rdesk-core` without a UI (debugging, integration tests).
+//! `porthole-cli`: drive `porthole-core` without a UI (debugging, integration tests).
 //!
 //! ```shell
-//! RDESK_PASSWORD=... rdesk-cli screenshot pc.example -u 'CONTOSO\alice' -o desktop.png
+//! PORTHOLE_PASSWORD=... porthole-cli screenshot pc.example -u 'CONTOSO\alice' -o desktop.png
 //! ```
 
 use std::path::PathBuf;
@@ -9,12 +9,12 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use clap::{Parser, Subcommand};
-use rdesk_core::{Credentials, MonitorRect, Security, SessionConfig, SessionEvent};
+use porthole_core::{Credentials, MonitorRect, Security, SessionConfig, SessionEvent};
 use tokio::time::Instant;
 use tracing::{info, warn};
 
 #[derive(Parser)]
-#[command(about = "Headless rdesk client for debugging and tests")]
+#[command(about = "Headless porthole client for debugging and tests")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -30,7 +30,7 @@ enum Command {
 struct ScreenshotArgs {
     /// Host name or IP address, optionally with `:port`.
     host: String,
-    /// User name, optionally as DOMAIN\user. The password comes from RDESK_PASSWORD or a prompt.
+    /// User name, optionally as DOMAIN\user. The password comes from PORTHOLE_PASSWORD or a prompt.
     #[arg(short, long)]
     username: String,
     #[arg(short, long, default_value = "screenshot.png")]
@@ -90,7 +90,7 @@ fn parse_monitors(text: &str) -> Result<Monitors, String> {
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("RDESK_LOG").unwrap_or_else(|_| "info,sspi=warn".into()),
+            tracing_subscriber::EnvFilter::try_from_env("PORTHOLE_LOG").unwrap_or_else(|_| "info,sspi=warn".into()),
         )
         .compact()
         .with_writer(std::io::stderr)
@@ -104,11 +104,11 @@ fn main() -> anyhow::Result<()> {
 
 async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> anyhow::Result<i32> {
     // Never taken from argv, where other local users could read it via /proc.
-    let password = match std::env::var("RDESK_PASSWORD") {
+    let password = match std::env::var("PORTHOLE_PASSWORD") {
         Ok(p) => p,
         Err(_) => rpassword::prompt_password(format!("Password for {}: ", args.username))?,
     };
-    let (host, port) = rdesk_core::parse_address(&args.host)?;
+    let (host, port) = porthole_core::parse_address(&args.host)?;
     let mut config = SessionConfig::new(host, Credentials::parse(&args.username, password));
     config.port = port;
     config.desktop_width = args.width;
@@ -120,7 +120,7 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
     }
     config.graphics_pipeline = !args.no_gfx;
 
-    let (session, events) = rdesk_core::connect(config, &runtime);
+    let (session, events) = porthole_core::connect(config, &runtime);
     let started = Instant::now();
     let deadline = started + Duration::from_secs(args.timeout);
     let settle = Duration::from_secs(args.settle);
@@ -199,7 +199,7 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
     }
 }
 
-fn save(session: &rdesk_core::SessionHandle, path: &std::path::Path) -> anyhow::Result<()> {
+fn save(session: &porthole_core::SessionHandle, path: &std::path::Path) -> anyhow::Result<()> {
     let (width, height, rgba) = session.framebuffer().take_damage(|d| {
         let mut rgba = Vec::with_capacity(d.data.len());
         for px in d.data.as_chunks::<4>().0 {

@@ -2,7 +2,7 @@
 //! desktop render until updates settle, and save the framebuffer as a PNG.
 //!
 //! ```shell
-//! RDESK_PASSWORD=... cargo run -p rdp-screenshot -- --host win11.lan -u alice -o out.png
+//! PORTHOLE_PASSWORD=... cargo run -p rdp-screenshot -- --host win11.lan -u alice -o out.png
 //! ```
 //!
 //! Based on IronRDP's `screenshot` example, with the password read from the environment or a
@@ -64,14 +64,14 @@ type TlsFramed = ironrdp_blocking::Framed<rustls::StreamOwned<rustls::ClientConn
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("RDESK_LOG").unwrap_or_else(|_| "info,sspi=warn".into()),
+            tracing_subscriber::EnvFilter::try_from_env("PORTHOLE_LOG").unwrap_or_else(|_| "info,sspi=warn".into()),
         )
         .compact()
         .init();
 
     let args = Args::parse();
     // Never taken from argv, where other local users could read it via /proc.
-    let password = match std::env::var("RDESK_PASSWORD") {
+    let password = match std::env::var("PORTHOLE_PASSWORD") {
         Ok(p) => p,
         Err(_) => rpassword::prompt_password(format!("Password for {}: ", args.username))?,
     };
@@ -135,7 +135,7 @@ fn build_config(args: &Args, username: String, password: String, domain: Option<
         },
         bitmap: None,
         client_build: 0,
-        client_name: "rdesk-spike".to_owned(),
+        client_name: "porthole-spike".to_owned(),
         client_dir: "C:\\Windows\\System32\\mstscax.dll".to_owned(),
         platform: MajorPlatformType::UNIX,
         enable_server_pointer: false,
