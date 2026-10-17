@@ -55,6 +55,8 @@ your user (undo with `--uninstall`):
 scripts/install-local.sh
 ```
 
+To build the Flatpak instead, see [`packaging/README.md`](packaging/README.md).
+
 ## Usage
 
 Type a PC name or IP address and press Connect, or add the PC to keep it. From a terminal:

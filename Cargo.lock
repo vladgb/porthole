@@ -169,6 +169,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ashpd"
+version = "0.13.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb8421aaa9644a5faf26735f258b669b15f063313ef8f8e2bdb28912a1a6f111"
+dependencies = [
+ "enumflags2",
+ "futures-util",
+ "getrandom 0.4.3",
+ "serde",
+ "tokio",
+ "zbus",
+]
+
+[[package]]
 name = "asn1-rs"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2780,7 +2794,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3299dd401feaf1d45afd8fd1c0586f10fcfb22f244bb9afa942cec73503b89d"
 dependencies = [
  "aes 0.8.4",
- "ashpd",
+ "ashpd 0.12.3",
  "cbc 0.1.2",
  "cipher 0.4.4",
  "digest 0.10.7",
@@ -3229,8 +3243,10 @@ dependencies = [
 name = "porthole-camera"
 version = "0.1.0"
 dependencies = [
+ "ashpd 0.13.13",
  "pipewire",
  "porthole-core",
+ "tokio",
  "tracing",
 ]
 

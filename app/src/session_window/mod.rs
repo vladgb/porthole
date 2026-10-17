@@ -378,7 +378,7 @@ fn start(state: &State) {
         config.microphone = Some(microphone);
     }
     if state.camera {
-        config.camera = Some(Arc::new(porthole_camera::PipeWireCameras));
+        config.camera = Some(Arc::new(porthole_camera::PipeWireCameras::default()));
     }
     config.shared_folders = state
         .shared_folders

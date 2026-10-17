@@ -7,8 +7,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ashpd.workspace = true
 pipewire.workspace = true
 porthole-core.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 
 [lints]

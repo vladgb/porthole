@@ -16,6 +16,7 @@ use tracing::{info, trace, warn};
 const ABI_VERSION_PREFIX: &str = "libopenh264.so.2.6.";
 
 const SEARCH_DIRS: &[&str] = &[
+    "/app/extra", // Cisco's binary, downloaded when the Flatpak is installed
     "/usr/lib/x86_64-linux-gnu",
     "/usr/lib64",
     "/usr/lib",

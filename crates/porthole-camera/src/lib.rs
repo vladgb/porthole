@@ -6,7 +6,9 @@
 
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::os::fd::OwnedFd;
 use std::rc::Rc;
+use std::sync::Mutex;
 use std::thread::JoinHandle;
 
 use pipewire as pw;
@@ -24,13 +26,55 @@ const MAX_SIZE: (u32, u32) = (1920, 1080);
 const COMMON_SIZES: [(u32, u32); 4] = [(1920, 1080), (1280, 720), (640, 480), (320, 240)];
 
 /// The cameras PipeWire knows about. `PORTHOLE_CAMERA_TARGET` (a node name) limits them to one.
+///
+/// In a sandbox (Flatpak) cameras are only reachable through the camera portal: listing them
+/// asks the user for access, and the PipeWire connection the portal hands out is used from then
+/// on.
 #[derive(Debug, Default)]
-pub struct PipeWireCameras;
+pub struct PipeWireCameras {
+    remote: Mutex<Option<OwnedFd>>,
+}
+
+impl PipeWireCameras {
+    /// A connection to the cameras' PipeWire: `None` for the default one, outside a sandbox.
+    /// May ask the portal, so only from a blocking context (listing runs in one).
+    fn remote(&self) -> Result<Option<OwnedFd>, String> {
+        if !ashpd::is_sandboxed() {
+            return Ok(None);
+        }
+        let mut remote = self.remote.lock().unwrap_or_else(|e| e.into_inner());
+        if remote.is_none() {
+            let runtime = tokio::runtime::Handle::try_current().map_err(|e| e.to_string())?;
+            *remote = Some(runtime.block_on(camera_portal())?);
+        }
+        let fd = remote.as_ref().map(OwnedFd::try_clone).transpose();
+        fd.map_err(|e| e.to_string())
+    }
+}
+
+/// Asks for camera access and opens the portal's PipeWire connection.
+async fn camera_portal() -> Result<OwnedFd, String> {
+    let camera = ashpd::desktop::camera::Camera::new()
+        .await
+        .map_err(|e| format!("no camera portal: {e}"))?;
+    camera
+        .request_access(Default::default())
+        .await
+        .and_then(|request| request.response())
+        .map_err(|e| format!("camera access wasn't granted: {e}"))?;
+    camera
+        .open_pipe_wire_remote(Default::default())
+        .await
+        .map_err(|e| format!("the camera portal didn't open PipeWire: {e}"))
+}
 
 impl Cameras for PipeWireCameras {
     fn devices(&self) -> Vec<CameraDevice> {
         let only = std::env::var("PORTHOLE_CAMERA_TARGET").ok();
-        match enumerate(only.as_deref()) {
+        let devices = self
+            .remote()
+            .and_then(|remote| enumerate(only.as_deref(), remote).map_err(|e| e.to_string()));
+        match devices {
             Ok(devices) => devices,
             Err(e) => {
                 warn!(error = %e, "Couldn't list the cameras");
@@ -40,9 +84,25 @@ impl Cameras for PipeWireCameras {
     }
 
     fn start(&self, device: &str, mode: VideoMode, sink: FrameSink) -> Result<Box<dyn Send>, String> {
-        Capture::start(device.to_owned(), mode, sink)
+        // Called from the session task: reuse the portal connection made while listing.
+        let remote = if ashpd::is_sandboxed() {
+            let remote = self.remote.lock().unwrap_or_else(|e| e.into_inner());
+            let fd = remote.as_ref().ok_or("camera access wasn't granted")?;
+            Some(fd.try_clone().map_err(|e| e.to_string())?)
+        } else {
+            None
+        };
+        Capture::start(device.to_owned(), mode, sink, remote)
             .map(|capture| Box::new(capture) as Box<dyn Send>)
             .map_err(|e| e.to_string())
+    }
+}
+
+/// Connects to `remote`, or to the default PipeWire.
+fn connect(context: &pw::context::ContextRc, remote: Option<OwnedFd>) -> Result<pw::core::CoreRc, pw::Error> {
+    match remote {
+        Some(fd) => context.connect_fd_rc(fd, None),
+        None => context.connect_rc(None),
     }
 }
 
@@ -53,11 +113,11 @@ struct Found {
     modes: Vec<VideoMode>,
 }
 
-fn enumerate(only: Option<&str>) -> Result<Vec<CameraDevice>, pw::Error> {
+fn enumerate(only: Option<&str>, remote: Option<OwnedFd>) -> Result<Vec<CameraDevice>, pw::Error> {
     pw::init();
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
-    let core = context.connect_rc(None)?;
+    let core = connect(&context, remote)?;
     let registry = core.get_registry_rc()?;
 
     let found: Rc<RefCell<Vec<Found>>> = Rc::default();
@@ -311,13 +371,13 @@ struct Capture {
 }
 
 impl Capture {
-    fn start(target: String, mode: VideoMode, sink: FrameSink) -> Result<Self, pw::Error> {
+    fn start(target: String, mode: VideoMode, sink: FrameSink, remote: Option<OwnedFd>) -> Result<Self, pw::Error> {
         let (quit, quit_rx) = pw::channel::channel::<()>();
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
             .name("porthole-camera".to_owned())
             .spawn(move || {
-                if let Err(e) = run(&target, mode, sink, quit_rx, &ready_tx) {
+                if let Err(e) = run(&target, mode, sink, remote, quit_rx, &ready_tx) {
                     let _ = ready_tx.send(Err(e));
                 }
             })
@@ -399,13 +459,14 @@ fn run(
     target: &str,
     mode: VideoMode,
     mut sink: FrameSink,
+    remote: Option<OwnedFd>,
     quit: pw::channel::Receiver<()>,
     ready: &std::sync::mpsc::Sender<Result<(), pw::Error>>,
 ) -> Result<(), pw::Error> {
     pw::init();
     let mainloop = pw::main_loop::MainLoopRc::new(None)?;
     let context = pw::context::ContextRc::new(&mainloop, None)?;
-    let core = context.connect_rc(None)?;
+    let core = connect(&context, remote)?;
     let mut properties = pw::properties::properties! {
         *pw::keys::MEDIA_TYPE => "Video",
         *pw::keys::MEDIA_CATEGORY => "Capture",

@@ -64,6 +64,7 @@ openh264 = { version = "0.9", default-features = false, features = ["libloading"
 ironrdp-rdpsnd = "0.9"
 ironrdp-cliprdr-format = "0.2"
 pipewire = { version = "0.10", features = ["v0_3_49"] }
+ashpd = { version = "0.13", default-features = false, features = ["tokio", "camera"] }
 
 # Runtime & plumbing
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }

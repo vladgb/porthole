@@ -2,3 +2,5 @@
 *.png
 !app/data/**/*.png
 .flatpak-builder/
+/packaging/flatpak/build-dir/
+/packaging/flatpak/repo/

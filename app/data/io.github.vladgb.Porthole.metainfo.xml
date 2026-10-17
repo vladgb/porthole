@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Vlad Baesu -->
+<component type="desktop-application">
+  <id>io.github.vladgb.Porthole</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT OR Apache-2.0</project_license>
+
+  <name>Porthole</name>
+  <summary>Use Windows PCs from your Linux desktop</summary>
+  <developer id="io.github.vladgb">
+    <name>Vlad Baesu</name>
+  </developer>
+
+  <description>
+    <p>
+      Porthole is a Remote Desktop (RDP) client. Connect to a Windows PC and use it as if you
+      were sitting in front of it: the remote desktop follows the size of the window, your
+      keyboard shortcuts go to the PC, and its sound plays here.
+    </p>
+    <ul>
+      <li>Keep your PCs in one place, with a picture of each one's last session</li>
+      <li>Smooth H.264 video, or a lossless mode for sharp text and exact colours</li>
+      <li>Full screen on one monitor or across all of them</li>
+      <li>Copy and paste text, images and files between this computer and the PC</li>
+      <li>Use your microphone and webcam in calls on the PC</li>
+      <li>Open local folders on the PC as drives</li>
+      <li>Passwords are kept in your keyring</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.vladgb.Porthole.desktop</launchable>
+
+  <url type="homepage">https://github.com/vladgb/porthole</url>
+  <url type="bugtracker">https://github.com/vladgb/porthole/issues</url>
+  <url type="vcs-browser">https://github.com/vladgb/porthole</url>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#99c1f1</color>
+    <color type="primary" scheme_preference="dark">#1a5fb4</color>
+  </branding>
+
+  <content_rating type="oars-1.1"/>
+
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+
+  <categories>
+    <category>Network</category>
+    <category>RemoteAccess</category>
+  </categories>
+  <keywords>
+    <keyword>RDP</keyword>
+    <keyword>Remote Desktop</keyword>
+    <keyword>Windows</keyword>
+  </keywords>
+
+  <releases>
+    <release version="0.1.0" date="2026-10-17">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>
