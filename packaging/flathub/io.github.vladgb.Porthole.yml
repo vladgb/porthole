@@ -1,0 +1,70 @@
+id: io.github.vladgb.Porthole
+runtime: org.gnome.Platform
+runtime-version: '51'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  # libclang, for the PipeWire bindings
+  - org.freedesktop.Sdk.Extension.llvm22
+command: porthole
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Sound and the microphone go to PipeWire directly; cameras come through the camera portal.
+  - --filesystem=xdg-run/pipewire-0
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin:/usr/lib/sdk/llvm22/bin
+  prepend-ld-library-path: /usr/lib/sdk/llvm22/lib
+  env:
+    LIBCLANG_PATH: /usr/lib/sdk/llvm22/lib
+    CARGO_HOME: /run/build/porthole/cargo
+    CARGO_NET_OFFLINE: 'true'
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+
+modules:
+  # H.264 needs Cisco's OpenH264 binary, which may only be distributed by Cisco: Flatpak
+  # downloads it from them when the app is installed.
+  - name: openh264
+    buildsystem: simple
+    only-arches:
+      - x86_64
+    build-commands:
+      - install -Dm755 apply_extra -t /app/bin
+    sources:
+      - type: extra-data
+        filename: libopenh264.so.bz2
+        url: http://ciscobinary.openh264.org/libopenh264-2.6.0-linux64.8.so.bz2
+        sha256: 27ab53323c110b76214c1c72222f459d17febbcd1e252136cadc292b0308d75b
+        size: 634264
+      - type: script
+        dest-filename: apply_extra
+        commands:
+          - bunzip2 libopenh264.so.bz2
+
+  - name: porthole
+    buildsystem: simple
+    build-commands:
+      - cargo --offline build --release -p porthole
+      - install -Dm755 target/release/porthole -t /app/bin
+      - install -Dm644 app/data/io.github.vladgb.Porthole.desktop -t /app/share/applications
+      - install -Dm644 app/data/io.github.vladgb.Porthole.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 app/data/icons/hicolor/scalable/apps/io.github.vladgb.Porthole.svg
+        -t /app/share/icons/hicolor/scalable/apps
+      - install -Dm644 app/data/icons/hicolor/symbolic/apps/io.github.vladgb.Porthole-symbolic.svg
+        -t /app/share/icons/hicolor/symbolic/apps
+    sources:
+      - type: git
+        url: https://github.com/vladgb/porthole.git
+        tag: v0.1.0
+        commit: 9279cd8ba587d0328a0d1aa53c800475757e84fd
+        x-checker-data:
+          type: git
+          tag-pattern: ^v([\d.]+)$
+      - cargo-sources.json

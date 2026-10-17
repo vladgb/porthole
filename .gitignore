@@ -4,3 +4,5 @@
 .flatpak-builder/
 /packaging/flatpak/build-dir/
 /packaging/flatpak/repo/
+/packaging/flathub/build-dir/
+/packaging/flathub/repo/
