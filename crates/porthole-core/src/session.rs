@@ -843,14 +843,17 @@ struct DisplayControl {
     requested: Option<Layout>,
     /// The framebuffer generation last seen, to notice the server (re)sizing the desktop.
     seen: u64,
-    /// The last request was sent again already (see `desktop_changed`).
-    retried: bool,
+    /// How often the last layout was sent again (see `retry_if_unmatched`).
+    retries: u32,
     /// When to ask again if the server hasn't changed the desktop by then.
     check_at: Option<Instant>,
 }
 
-/// How long the server gets to apply a layout before it's asked once more.
+/// How long the server gets to apply a layout before it's asked again, times the attempt.
 const LAYOUT_RETRY_AFTER: Duration = Duration::from_secs(2);
+/// Windows ignores layouts while it's busy just after signing in, and its own graphics reset
+/// can undo one, so a layout is sent up to this many more times.
+const LAYOUT_RETRIES: u32 = 4;
 
 /// Monitors (the first is the primary, at 0,0) and the scale in percent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -891,11 +894,11 @@ impl DisplayControl {
             return;
         }
         self.pending = Some(layout);
-        self.retried = false;
+        self.retries = 0;
     }
 
     /// The server can override a resize, e.g. when the Graphics Pipeline starts at the initial
-    /// size right after our request. Asks once more if the desktop doesn't match the request.
+    /// size right after our request. Asks again if the desktop doesn't match the request.
     fn desktop_changed(
         &mut self,
         generation: u64,
@@ -927,13 +930,13 @@ impl DisplayControl {
         stage: &mut ActiveStage,
     ) -> Result<Vec<ActiveStageOutput>, DisconnectReason> {
         match &self.requested {
-            Some(request) if request.bounds() != current && !self.retried => {
+            Some(request) if request.bounds() != current && self.retries < LAYOUT_RETRIES => {
                 debug!(
                     ?current,
                     ?request,
                     "Desktop doesn't match the requested layout; asking again"
                 );
-                self.retried = true;
+                self.retries += 1;
                 self.pending = self.requested.clone();
                 self.send(stage)
             }
@@ -959,7 +962,8 @@ impl DisplayControl {
         match frame {
             Some(frame) => {
                 self.requested = Some(layout);
-                self.check_at = (!self.retried).then(|| Instant::now() + LAYOUT_RETRY_AFTER);
+                self.check_at =
+                    (self.retries < LAYOUT_RETRIES).then(|| Instant::now() + LAYOUT_RETRY_AFTER * (self.retries + 1));
                 Ok(vec![ActiveStageOutput::ResponseFrame(frame.map_err(protocol_error)?)])
             }
             None => Ok(Vec::new()),

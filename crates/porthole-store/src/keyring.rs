@@ -4,6 +4,7 @@
 //! Needs a Tokio runtime.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -12,14 +13,29 @@ const APPLICATION: &str = "io.github.vladgb.Porthole";
 /// Earlier app IDs: passwords saved under them are found and moved over.
 const LEGACY_APPLICATIONS: [&str; 2] = ["io.github.porthole.Porthole", "io.github.rdesk.Rdesk"];
 
+/// Waiting longer for the keyring would leave the user looking at nothing.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Debug, thiserror::Error)]
-#[error("the keyring is unavailable: {0}")]
-pub struct KeyringError(Box<oo7::Error>);
+pub enum KeyringError {
+    #[error("the keyring is unavailable: {0}")]
+    Unavailable(Box<oo7::Error>),
+    #[error("the keyring didn't respond")]
+    NoResponse,
+}
 
 impl From<oo7::Error> for KeyringError {
     fn from(e: oo7::Error) -> Self {
-        Self(Box::new(e))
+        Self::Unavailable(Box::new(e))
     }
+}
+
+/// Opens the keyring, giving up when there's no keyring service to answer.
+async fn open() -> Result<oo7::Keyring, KeyringError> {
+    tokio::time::timeout(OPEN_TIMEOUT, oo7::Keyring::new())
+        .await
+        .map_err(|_| KeyringError::NoResponse)?
+        .map_err(KeyringError::from)
 }
 
 fn attributes(pc: Uuid, username: Option<&str>) -> HashMap<&'static str, String> {
@@ -36,7 +52,7 @@ fn attributes_for(application: &str, pc: Uuid, username: Option<&str>) -> HashMa
 
 /// The saved password for `username` on the PC, if any.
 pub async fn password(pc: Uuid, username: &str) -> Result<Option<Zeroizing<String>>, KeyringError> {
-    let keyring = oo7::Keyring::new().await?;
+    let keyring = open().await?;
     let mut items = keyring.search_items(&attributes(pc, Some(username))).await?;
     let mut legacy = None;
     for application in LEGACY_APPLICATIONS {
@@ -64,7 +80,7 @@ pub async fn password(pc: Uuid, username: &str) -> Result<Option<Zeroizing<Strin
 
 /// Saves the password for `username`, replacing any saved for the PC (under any user name).
 pub async fn store_password(pc: Uuid, username: &str, label: &str, password: &str) -> Result<(), KeyringError> {
-    let keyring = oo7::Keyring::new().await?;
+    let keyring = open().await?;
     forget_all(&keyring, pc).await?;
     keyring
         .create_item(label, &attributes(pc, Some(username)), password, true)
@@ -74,7 +90,7 @@ pub async fn store_password(pc: Uuid, username: &str, label: &str, password: &st
 
 /// Removes any saved password for the PC.
 pub async fn forget_password(pc: Uuid) -> Result<(), KeyringError> {
-    let keyring = oo7::Keyring::new().await?;
+    let keyring = open().await?;
     forget_all(&keyring, pc).await
 }
 

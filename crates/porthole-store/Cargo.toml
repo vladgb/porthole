@@ -13,6 +13,7 @@ uuid.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 oo7.workspace = true
+tokio = { workspace = true, features = ["time"] }
 zeroize.workspace = true
 
 [dev-dependencies]
