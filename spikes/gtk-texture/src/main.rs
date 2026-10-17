@@ -99,7 +99,7 @@ fn main() -> glib::ExitCode {
     let args = Args::parse();
     SIZE.set(args.size).unwrap();
     let app = gtk::Application::builder()
-        .application_id("io.github.porthole.GtkTextureSpike")
+        .application_id("io.github.vladgb.GtkTextureSpike")
         .build();
     app.connect_activate(move |app| activate(app, args.clone()));
     // Our own flags are parsed by clap; don't let GApplication see them.

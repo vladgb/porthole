@@ -4,7 +4,7 @@
 # Undo with: scripts/install-local.sh --uninstall
 set -eu
 
-APP_ID=io.github.porthole.Porthole
+APP_ID=io.github.vladgb.Porthole
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DATA=${XDG_DATA_HOME:-$HOME/.local/share}
 DESKTOP=$DATA/applications/$APP_ID.desktop

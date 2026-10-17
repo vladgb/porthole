@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/data/icons/hicolor/scalable/apps/io.github.porthole.Porthole.svg" width="128" alt="">
+  <img src="app/data/icons/hicolor/scalable/apps/io.github.vladgb.Porthole.svg" width="128" alt="">
 </p>
 
 # Porthole

@@ -33,7 +33,7 @@ default-members = [
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/OWNER/porthole"
+repository = "https://github.com/vladgb/porthole"
 rust-version = "1.88"
 
 [workspace.dependencies]

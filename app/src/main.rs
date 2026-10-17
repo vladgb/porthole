@@ -10,7 +10,7 @@ use adw::prelude::*;
 use gtk4::glib;
 use libadwaita as adw;
 
-const APP_ID: &str = "io.github.porthole.Porthole";
+const APP_ID: &str = "io.github.vladgb.Porthole";
 
 /// One multi-threaded runtime for all sessions; GTK stays on the main thread.
 fn runtime() -> &'static tokio::runtime::Runtime {
