@@ -446,6 +446,17 @@ pub async fn confirm_remove(parent: &impl IsA<gtk::Widget>, name: &str) -> bool 
 }
 
 /// Reports something that went wrong; there's nothing to decide.
+/// `text` as a sentence: capitalised, ending in a period.
+pub fn sentence(text: &str) -> String {
+    let mut chars = text.trim().chars();
+    let mut out: String = chars.next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+    out.push_str(chars.as_str());
+    if !out.ends_with(['.', '!', '?']) {
+        out.push('.');
+    }
+    out
+}
+
 pub fn show_error(parent: &impl IsA<gtk::Widget>, heading: &str, body: &str) {
     let dialog = adw::AlertDialog::new(Some(heading), Some(body));
     dialog.add_response("close", "Close");

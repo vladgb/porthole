@@ -21,16 +21,41 @@ const SETTINGS_FILE: &str = "settings.toml";
 const FORMAT_VERSION: u32 = 1;
 const DEFAULT_PORT: u16 = 3389;
 
+/// Worded for people; the paths and system errors are kept for logs (`Debug`).
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
-    #[error("couldn't find the configuration folder (neither XDG_CONFIG_HOME nor HOME is set)")]
+    #[error("there's no folder to keep settings in")]
     NoConfigDir,
-    #[error("couldn't read {}: {source}", path.display())]
+    #[error("{} couldn't be read: {}", what(path), plain_io(source))]
     Read { path: PathBuf, source: io::Error },
-    #[error("couldn't save {}: {source}", path.display())]
+    #[error("{} couldn't be saved: {}", what(path), plain_io(source))]
     Write { path: PathBuf, source: io::Error },
-    #[error("{} was written by a newer version of this app (format {found})", path.display())]
+    #[error("{} come from a newer version of Porthole", what(path))]
     NewerFormat { path: PathBuf, found: u32 },
+}
+
+/// What a store file holds, for messages.
+pub fn what(path: &Path) -> &'static str {
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+    if name.starts_with(PCS_FILE) {
+        "your saved PCs"
+    } else if name.starts_with(CERTIFICATES_FILE) {
+        "the trusted certificates"
+    } else if name.starts_with(SETTINGS_FILE) {
+        "the settings"
+    } else if name.ends_with(".png") {
+        "the PC's thumbnail"
+    } else {
+        "a settings file"
+    }
+}
+
+fn plain_io(e: &io::Error) -> &'static str {
+    match e.kind() {
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => "there's no space left on this computer",
+        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => "permission was denied",
+        _ => "a file error occurred",
+    }
 }
 
 /// A saved PC.

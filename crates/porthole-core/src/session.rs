@@ -475,7 +475,7 @@ fn classify_connector_error(e: ConnectorError, nla: bool) -> DisconnectReason {
     // Without IronRDP's source locations, which mean nothing to users.
     let detail = match e.kind() {
         ConnectorErrorKind::Reason(description) => description.clone(),
-        kind => error_chain(kind),
+        kind => strip_locations(&error_chain(kind)),
     };
     match e.kind() {
         // The server picked a protocol we didn't offer: it can't do NLA.
@@ -496,6 +496,10 @@ fn classify_connector_error(e: ConnectorError, nla: bool) -> DisconnectReason {
         _ => match find_io_error(&e) {
             Some(io) if io.kind() == io::ErrorKind::UnexpectedEof => {
                 DisconnectReason::ConnectionLost("the PC closed the connection while connecting".to_owned())
+            }
+            // Something answered, but not in RDP (a web server on that port, say).
+            Some(io) if matches!(io.kind(), io::ErrorKind::Other | io::ErrorKind::InvalidData) => {
+                DisconnectReason::NotRemoteDesktop(strip_locations(&error_chain(&e)))
             }
             Some(io) => DisconnectReason::ConnectionLost(describe_io(io)),
             None => DisconnectReason::Protocol(detail),
@@ -551,7 +555,13 @@ fn describe_io(e: &io::Error) -> String {
             "the PC isn't reachable from this network".to_owned()
         }
         io::ErrorKind::TimedOut => "the network connection timed out".to_owned(),
-        _ => e.to_string(),
+        io::ErrorKind::ConnectionRefused => "the PC refused the connection".to_owned(),
+        io::ErrorKind::PermissionDenied => "this computer blocked the connection".to_owned(),
+        io::ErrorKind::NetworkDown => "this computer isn't connected to a network".to_owned(),
+        _ => {
+            warn!(error = %e, "Network error");
+            "a network error occurred".to_owned()
+        }
     }
 }
 
@@ -569,6 +579,20 @@ fn protocol_error(e: SessionError) -> DisconnectReason {
         return DisconnectReason::ServerEnded("the PC closed the connection".to_owned());
     }
     DisconnectReason::Protocol(detail)
+}
+
+/// The server's reason as a sentence: without IronRDP's `[category]` prefix, ending in a period.
+fn server_reason(description: &str) -> String {
+    let text = match description.strip_prefix('[').and_then(|rest| rest.split_once("] ")) {
+        Some((_, text)) => text,
+        None => description,
+    }
+    .trim();
+    if text.ends_with('.') {
+        text.to_owned()
+    } else {
+        format!("{text}.")
+    }
 }
 
 /// Removes IronRDP's `[context @ file:line]` markers, which mean nothing to users.
@@ -769,7 +793,9 @@ async fn active_session(
                         GracefulDisconnectReason::ServerInitiated => {
                             DisconnectReason::ServerEnded("the session was ended on the PC".to_owned())
                         }
-                        GracefulDisconnectReason::Other(description) => DisconnectReason::ServerEnded(description),
+                        GracefulDisconnectReason::Other(description) => {
+                            DisconnectReason::ServerEnded(server_reason(&description))
+                        }
                     });
                 }
                 ActiveStageOutput::DeactivateAll => {
@@ -1150,5 +1176,23 @@ mod tests {
         assert!(!DisconnectReason::Authentication(AuthFailure::WrongCredentials).may_retry());
         assert!(!DisconnectReason::CertificateRejected.may_retry());
         assert!(DisconnectReason::ConnectionLost(String::new()).may_retry());
+    }
+
+    #[test]
+    fn messages_keep_technical_detail_apart() {
+        assert_eq!(
+            server_reason("[Protocol independent error] The idle session limit timer on the server has elapsed"),
+            "The idle session limit timer on the server has elapsed."
+        );
+        assert_eq!(server_reason("Already a sentence."), "Already a sentence.");
+
+        let reason = DisconnectReason::Protocol("decode PDU: invalid field `length`".to_owned());
+        assert!(!reason.to_string().contains("PDU"));
+        assert_eq!(reason.detail(), Some("decode PDU: invalid field `length`"));
+        assert_eq!(DisconnectReason::UserRequested.detail(), None);
+
+        let refused = io::Error::from(io::ErrorKind::ConnectionRefused);
+        assert_eq!(describe_io(&refused), "the PC refused the connection");
+        assert!(!describe_io(&io::Error::other("odd")).contains("odd"));
     }
 }

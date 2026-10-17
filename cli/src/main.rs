@@ -192,7 +192,7 @@ async fn screenshot(args: ScreenshotArgs, runtime: tokio::runtime::Handle) -> an
             }
             SessionEvent::Pointer(_) | SessionEvent::Clipboard(_) => {}
             SessionEvent::Disconnected(reason) => {
-                info!(%reason, "Disconnected");
+                info!(%reason, detail = reason.detail().unwrap_or_default(), "Disconnected");
                 return Ok(if saved { 0 } else { 1 });
             }
         }

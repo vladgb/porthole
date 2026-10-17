@@ -53,12 +53,11 @@ fn open_config() -> Config {
     let (store, problem) = match porthole_store::Store::open_default() {
         Ok(store) => {
             let problem = store.recovered().first().map(|r| {
-                let name = |p: &std::path::Path| p.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                format!(
-                    "{} couldn't be read, so it starts empty. The old file was kept as {}.",
-                    name(&r.path),
-                    name(&r.backup)
-                )
+                tracing::warn!(path = %r.path.display(), backup = %r.backup.display(), "Unreadable store file moved aside");
+                let what = porthole_store::what(&r.path);
+                let mut what = what.to_owned();
+                what[..1].make_ascii_uppercase();
+                format!("{what} couldn't be read, so Porthole started without them. A copy was kept.")
             });
             (store, problem)
         }
@@ -66,7 +65,9 @@ fn open_config() -> Config {
             tracing::warn!(error = %e, "Saved PCs unavailable");
             (
                 porthole_store::Store::in_memory(),
-                Some(format!("Saved PCs are unavailable: {e}. Changes won't be saved.")),
+                Some(format!(
+                    "Saved PCs are unavailable because {e}. Changes won't be saved."
+                )),
             )
         }
     };
@@ -84,6 +85,8 @@ fn main() -> glib::ExitCode {
         .compact()
         .init();
 
+    // The name the desktop shows for the app (permission prompts, sound settings, …).
+    glib::set_application_name("Porthole");
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .flags(gtk4::gio::ApplicationFlags::HANDLES_COMMAND_LINE)

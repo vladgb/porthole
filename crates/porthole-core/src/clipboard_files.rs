@@ -7,7 +7,7 @@
 //! paste, one file after another in 1 MiB requests, into a folder the UI picks.
 
 use std::fs::{self, File};
-use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+use std::io::{self, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
@@ -191,7 +191,8 @@ impl Download {
             return Err((reply, "the copied files have unusable names".to_owned()));
         };
         if let Err(e) = fs::create_dir_all(&dir) {
-            return Err((reply, e.to_string()));
+            warn!(dir = %dir.display(), error = %e, "Couldn't create the paste folder");
+            return Err((reply, file_error(&e)));
         }
         debug!(files = files.len(), dir = %dir.display(), "Downloading copied files");
         Ok(Self {
@@ -214,7 +215,7 @@ impl Download {
             let target = &self.targets[self.index];
             if is_dir(descriptor) {
                 if let Err(e) = fs::create_dir_all(target) {
-                    self.fail(format!("{}: {e}", target.display()));
+                    self.fail_io(&target.clone(), &e);
                     return None;
                 }
                 self.index += 1;
@@ -228,7 +229,7 @@ impl Download {
                 match created {
                     Ok(file) => self.file = Some(file),
                     Err(e) => {
-                        self.fail(format!("{}: {e}", target.display()));
+                        self.fail_io(&target.clone(), &e);
                         return None;
                     }
                 }
@@ -285,7 +286,8 @@ impl Download {
         if let Some(file) = &mut self.file
             && let Err(e) = file.write_all(&data)
         {
-            self.fail(e.to_string());
+            let target = self.targets.get(self.index).cloned().unwrap_or_default();
+            self.fail_io(&target, &e);
             return true;
         }
         self.position += data.len() as u64;
@@ -314,12 +316,29 @@ impl Download {
         true
     }
 
+    fn fail_io(&mut self, path: &Path, e: &io::Error) {
+        warn!(path = %path.display(), error = %e, "Couldn't save a copied file");
+        self.fail(file_error(e));
+    }
+
     fn fail(&mut self, error: String) {
         warn!(%error, "Downloading copied files failed");
         if let Some(reply) = self.reply.take() {
             let _ = reply.send(Err(error));
         }
     }
+}
+
+/// Why files couldn't be saved here, for people.
+fn file_error(e: &io::Error) -> String {
+    match e.kind() {
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => "there's no space left on this computer",
+        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => {
+            "Porthole isn't allowed to save files here"
+        }
+        _ => "the files couldn't be saved on this computer",
+    }
+    .to_owned()
 }
 
 /// Where a remote file goes under `dir`; `None` if any part of its path is unsafe.

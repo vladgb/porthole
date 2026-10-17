@@ -508,7 +508,11 @@ async fn edit(state: State, pc: Option<Pc>) {
     };
     let saved = crate::config().store.borrow_mut().save_pc(pc);
     if let Err(e) = saved {
-        dialogs::show_error(&state.window, "Couldn't Save the PC", &e.to_string());
+        dialogs::show_error(
+            &state.window,
+            "Couldn't Save the PC",
+            &dialogs::sentence(&e.to_string()),
+        );
     }
     refresh(&state);
 }
@@ -523,7 +527,11 @@ async fn remove(state: State, pc: Pc) {
         tracing::warn!(error = %e, "Couldn't remove the saved password");
     }
     if let Err(e) = removed {
-        dialogs::show_error(&state.window, "Couldn't Remove the PC", &e.to_string());
+        dialogs::show_error(
+            &state.window,
+            "Couldn't Remove the PC",
+            &dialogs::sentence(&e.to_string()),
+        );
     }
     refresh(&state);
 }

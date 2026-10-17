@@ -44,12 +44,14 @@ pub enum PointerEvent {
     Bitmap(Arc<DecodedPointer>),
 }
 
-/// Why a session ended, worded for people.
+/// Why a session ended, worded for people. Variants with a `String` keep technical detail for
+/// [`DisconnectReason::detail`] (shown on request, never as the message itself), except
+/// `ServerEnded` and `HostNotFound`, whose text is meant to be shown.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DisconnectReason {
     #[error("You disconnected")]
     UserRequested,
-    #[error("The remote PC ended the session: {0}")]
+    #[error("The PC ended the session: {0}")]
     ServerEnded(String),
     #[error("Couldn't find the PC “{0}”. Check the name, or the network connection.")]
     HostNotFound(String),
@@ -67,17 +69,32 @@ pub enum DisconnectReason {
     NlaNotSupported,
     #[error("The PC requires Network Level Authentication (NLA). Turn on NLA in this PC's settings.")]
     NlaRequired,
-    #[error("The PC and this app couldn't agree on security settings: {0}")]
+    #[error("The PC and Porthole couldn't agree on a secure connection.")]
     Negotiation(String),
+    #[error("There's no Remote Desktop PC at this address. Check the PC name and port.")]
+    NotRemoteDesktop(String),
     #[error("The connection to the PC was lost: {0}")]
     ConnectionLost(String),
-    #[error("The connection failed because of a protocol error: {0}")]
+    #[error("The PC sent something Porthole couldn't understand, so the session ended.")]
     Protocol(String),
-    #[error("An internal error ended the session: {0}")]
+    #[error("A problem in Porthole ended the session.")]
     Internal(String),
 }
 
 impl DisconnectReason {
+    /// Technical detail behind the message, for a "Details" section and bug reports.
+    pub fn detail(&self) -> Option<&str> {
+        match self {
+            Self::Negotiation(detail)
+            | Self::NotRemoteDesktop(detail)
+            | Self::Protocol(detail)
+            | Self::Internal(detail) => Some(detail.as_str()),
+            Self::Authentication(AuthFailure::Other(detail)) => Some(detail.as_str()),
+            _ => None,
+        }
+        .filter(|detail| !detail.is_empty())
+    }
+
     /// Whether retrying automatically is safe. Never retry sign-in failures: each attempt counts
     /// towards the account lockout threshold.
     pub fn may_retry(&self) -> bool {
@@ -105,7 +122,8 @@ pub enum AuthFailure {
     AccountRestriction,
     #[error("The account isn't allowed to sign in remotely")]
     LogonNotGranted,
-    #[error("Sign-in failed: {0}")]
+    /// The detail is technical; see [`DisconnectReason::detail`].
+    #[error("Sign-in failed")]
     Other(String),
 }
 
@@ -144,7 +162,8 @@ impl fmt::Display for CertificateProblem {
             Self::Expired => f.write_str("The certificate has expired"),
             Self::NotYetValid => f.write_str("The certificate isn't valid yet"),
             Self::Revoked => f.write_str("The certificate has been revoked"),
-            Self::Other(e) => write!(f, "The certificate couldn't be verified: {e}"),
+            // The detail is a TLS library error, logged when the certificate is checked.
+            Self::Other(_) => f.write_str("The certificate couldn't be verified"),
         }
     }
 }

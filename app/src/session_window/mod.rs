@@ -63,6 +63,8 @@ struct Inner {
     stack: gtk::Stack,
     picture: gtk::Picture,
     ended: adw::StatusPage,
+    details: gtk::Expander,
+    details_label: gtk::Label,
     reconnect: gtk::Button,
 
     host: String,
@@ -187,10 +189,31 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         .halign(gtk::Align::Center)
         .css_classes(["pill", "suggested-action"])
         .build();
+    // Technical detail behind a disconnection, folded away: useful for reporting a problem.
+    let details_label = gtk::Label::builder()
+        .selectable(true)
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .xalign(0.0)
+        .css_classes(["caption", "monospace", "dim-label"])
+        .build();
+    let details = gtk::Expander::builder()
+        .label("Details")
+        .child(&details_label)
+        .visible(false)
+        .build();
+    let ended_box = gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(18)
+        .halign(gtk::Align::Center)
+        .width_request(360)
+        .build();
+    ended_box.append(&reconnect);
+    ended_box.append(&details);
     let ended = adw::StatusPage::builder()
         .icon_name("network-offline-symbolic")
         .title("Disconnected")
-        .child(&reconnect)
+        .child(&ended_box)
         .build();
 
     let stack = gtk::Stack::builder()
@@ -235,6 +258,8 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         stack,
         picture,
         ended,
+        details,
+        details_label,
         reconnect,
         host,
         port,
@@ -506,6 +531,7 @@ fn schedule_auto_reconnect(state: &State, reason: &DisconnectReason) -> bool {
     }
     state.reconnect_attempts.set(attempt + 1);
     state.ended.set_title("Reconnecting…");
+    state.details.set_visible(false);
     state.reconnect.set_label("Reconnect Now");
     state.title.set_subtitle("Reconnecting…");
     state.stack.set_visible_child_name("ended");
@@ -643,6 +669,9 @@ fn session_ended(state: &State, reason: DisconnectReason) {
     state
         .ended
         .set_description(Some(&glib::markup_escape_text(&reason.to_string())));
+    state.details_label.set_label(reason.detail().unwrap_or_default());
+    state.details.set_expanded(false);
+    state.details.set_visible(reason.detail().is_some());
     state
         .reconnect
         .set_label(if auth { "Sign In Again" } else { "Reconnect" });
