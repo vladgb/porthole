@@ -257,7 +257,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
         .build();
     let clipboard_row = adw::SwitchRow::builder()
         .title("Share Clipboard")
-        .subtitle("Copy and paste text between this computer and the PC")
+        .subtitle("Copy and paste text, images and files between this computer and the PC")
         .active(pc.is_none_or(|pc| pc.clipboard))
         .build();
     if let Some(pc) = pc {

@@ -7,6 +7,8 @@
 A native Remote Desktop (RDP) client for the Linux desktop, built with GTK 4 and libadwaita.
 Connect to Windows PCs and use them as if you were sitting in front of them.
 
+![Porthole showing a Windows desktop](app/data/screenshots/session.png)
+
 > **Status:** early, but used daily. Tested against Windows 11. Expect rough edges, and
 > please report what you find.
 
