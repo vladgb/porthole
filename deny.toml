@@ -1,0 +1,27 @@
+# cargo-deny: checks Cargo.lock against the RustSec advisory database (CVEs and other
+# security advisories for crates). Run locally with `cargo deny check advisories`.
+
+[advisories]
+# Only flag unmaintained crates we depend on directly; the ones deeper in the tree are for
+# our dependencies to replace, and are reported to them instead.
+unmaintained = "workspace"
+yanked = "deny"
+
+# Every ignored advisory says why it doesn't affect Porthole. Revisit them whenever the
+# dependency that pulls the crate in is updated.
+ignore = [
+    # rsa: Marvin attack, a timing side channel when *decrypting* with an RSA private key.
+    # Pulled in by picky (via ironrdp-connector); Porthole's password logon never decrypts
+    # with a private key, and there is no fixed rsa release yet.
+    { id = "RUSTSEC-2023-0071", reason = "no private-key decryption in Porthole; no fix released" },
+
+    # hickory-proto: endless loop in DNSSEC NSEC3 validation. Only reachable with the
+    # `dnssec-*` features, which nothing in the tree enables (sspi resolves KDCs with plain
+    # DNS SRV lookups).
+    { id = "RUSTSEC-2026-0118", reason = "DNSSEC validation is not enabled" },
+
+    # hickory-proto: quadratic time when *encoding* a message with many names. Porthole only
+    # encodes its own one-name SRV queries for the Kerberos KDC. The fix is in 0.26, which
+    # sspi 0.21 can't use yet.
+    { id = "RUSTSEC-2026-0119", reason = "only our own one-name queries are encoded; fix needs sspi to move to hickory 0.26" },
+]
