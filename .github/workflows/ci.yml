@@ -16,7 +16,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential \
-            pkg-config clang libgtk-4-dev libadwaita-1-dev
+            pkg-config clang libclang-dev libgtk-4-dev libadwaita-1-dev libpipewire-0.3-dev
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
