@@ -1,0 +1,37 @@
+# Weekly update pull requests. Fixes for known vulnerabilities come as soon as they're
+# published, through Dependabot security updates (turned on in the repository settings).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # IronRDP's crates are released together and two of them are patched from vendor/
+      # (see vendor/README.md), so they're updated together and by hand-checked PR.
+      ironrdp:
+        patterns:
+          - ironrdp*
+          - sspi
+          - picky*
+      gtk:
+        patterns:
+          - gtk4*
+          - libadwaita*
+          - glib*
+          - gio*
+      # Everything else that stays semver-compatible, in one PR.
+      compatible:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - '*'
