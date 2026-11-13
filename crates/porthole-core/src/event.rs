@@ -26,6 +26,8 @@ pub enum SessionEvent {
     Pointer(PointerEvent),
     /// The remote PC copied something; put it on the local clipboard.
     Clipboard(crate::RemoteClipboard),
+    /// The program and its windows, in a RemoteApp session ([`crate::SessionConfig::remote_app`]).
+    RemoteApp(crate::RemoteAppEvent),
     /// Always the last event of a session.
     Disconnected(DisconnectReason),
 }

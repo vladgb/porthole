@@ -100,6 +100,10 @@ pub struct Pc {
     /// Local folders the PC can open as drives.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shared_folders: Vec<PathBuf>,
+    /// Show only this program's windows instead of the desktop (RemoteApp): a path, a name on
+    /// the PC's PATH, or `||alias` for a published program.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
     /// Unix time of the last successful connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_connected: Option<u64>,
@@ -134,6 +138,7 @@ impl Pc {
             all_monitors: false,
             best_quality: false,
             shared_folders: Vec::new(),
+            program: None,
             last_connected: None,
         }
     }

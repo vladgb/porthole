@@ -26,6 +26,9 @@ Connect to Windows PCs and use them as if you were sitting in front of them.
 - **Clipboard:** text, images and files, both ways.
 - **Sound** from the PC, and your **microphone** and **webcam** for calls on the PC.
 - **Shared folders:** local folders appear on the PC as drives.
+- **Just one program (RemoteApp):** instead of the whole desktop, show only a program's
+  windows, each as a window of its own (set "Only This Program" in the PC's settings, or pass
+  `--app`). Windows PCs need to allow it; see below.
 - Automatic reconnection after a dropped network connection.
 
 Planned: printers, smart cards, opening `.rdp` files and `rdp://` links, and packages
@@ -65,6 +68,14 @@ Type a PC name or IP address and press Connect, or add the PC to keep it. From a
 
 ```sh
 porthole pc.example.com -u 'CONTOSO\alice'
+```
+
+To show only one program, add `--app notepad.exe` (a program on the PC's `PATH`, a full path,
+or `||alias` for a program published by an RD Session Host). Windows 10/11 Pro only start
+programs that weren't published if this is set on the PC (as an administrator, then sign out):
+
+```
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v fAllowUnlistedRemotePrograms /t REG_DWORD /d 1 /f
 ```
 
 Set `PORTHOLE_LOG=debug` to see what's going on, for example when reporting a problem.

@@ -13,6 +13,7 @@ members = [
     "app",
     "cli",
     "spikes/rdp-screenshot",
+    "spikes/rdp-remoteapp",
     "spikes/gtk-texture",
 ]
 # `app`, `porthole-audio`, `porthole-camera` and `spikes/gtk-texture` need system libraries (GTK4/libadwaita, PipeWire + libclang);
@@ -27,6 +28,7 @@ default-members = [
     "crates/porthole-gateway",
     "cli",
     "spikes/rdp-screenshot",
+    "spikes/rdp-remoteapp",
 ]
 
 [workspace.package]
@@ -102,3 +104,4 @@ codegen-units = 1
 [patch.crates-io]
 ironrdp-connector = { path = "vendor/ironrdp-connector" }
 ironrdp-rdpsnd = { path = "vendor/ironrdp-rdpsnd" }
+ironrdp-pdu = { path = "vendor/ironrdp-pdu" }

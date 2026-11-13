@@ -24,4 +24,29 @@ ignore = [
     # encodes its own one-name SRV queries for the Kerberos KDC. The fix is in 0.26, which
     # sspi 0.21 can't use yet.
     { id = "RUSTSEC-2026-0119", reason = "only our own one-name queries are encoded; fix needs sspi to move to hickory 0.26" },
+
+    # hickory-proto 0.25: the fixes for the advisories below are only in hickory 0.26.2, and
+    # every sspi release up to 0.23.1 still requires hickory 0.25.
+
+    # Panics when parsing SVCB/HTTPS records or long tokens from zone file *text*. Nothing in
+    # the tree parses zone files; DNS answers are decoded from the wire format.
+    { id = "RUSTSEC-2026-0487", reason = "no zone file text is parsed" },
+    { id = "RUSTSEC-2026-0489", reason = "no zone file text is parsed" },
+    { id = "RUSTSEC-2026-0490", reason = "no zone file text is parsed" },
+
+    # A DNS answer whose header claims 65,535 records makes the decoder reserve about 18 MB
+    # up front. sspi only resolves the Kerberos KDC (a few SRV lookups per logon), so a
+    # spoofed answer costs Porthole a short-lived allocation, not a lasting denial of service.
+    { id = "RUSTSEC-2026-0491", reason = "only a few KDC SRV answers per logon are decoded; the allocation is short-lived; fix needs sspi to move to hickory 0.26" },
+
+    # DNSSEC validation flaws. Only reachable with validation enabled (the `dnssec-*`
+    # features), which nothing in the tree turns on.
+    { id = "RUSTSEC-2026-0504", reason = "DNSSEC validation is not enabled" },
+    { id = "RUSTSEC-2026-0505", reason = "DNSSEC validation is not enabled" },
+    { id = "RUSTSEC-2026-0511", reason = "DNSSEC validation is not enabled" },
+    { id = "RUSTSEC-2026-0512", reason = "DNSSEC validation is not enabled" },
+    { id = "RUSTSEC-2026-0514", reason = "DNSSEC validation is not enabled" },
+    { id = "RUSTSEC-2026-0530", reason = "DNSSEC validation is not enabled" },
+    { id = "RUSTSEC-2026-0531", reason = "DNSSEC validation is not enabled" },
+    { id = "RUSTSEC-2026-0532", reason = "DNSSEC validation is not enabled" },
 ]

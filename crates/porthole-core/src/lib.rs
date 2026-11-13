@@ -28,6 +28,8 @@ mod framebuffer;
 mod gfx;
 mod h264;
 mod kerberos;
+mod rail;
+mod rail_orders;
 mod session;
 mod tls;
 
@@ -42,6 +44,8 @@ pub use event::{
     PointerEvent, SessionEvent,
 };
 pub use framebuffer::{Damage, Framebuffer, Rect};
+pub use gfx::WindowImage;
+pub use rail::{MoveSizeKind, RemoteApp, RemoteAppEvent, RemoteWindow, WindowCommand};
 pub use session::{SessionHandle, connect};
 pub use tls::fingerprint;
 

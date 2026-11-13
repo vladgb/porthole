@@ -54,8 +54,9 @@ pub(super) fn schedule(state: &State) {
 }
 
 fn request(state: &State) {
-    // While spanning all monitors the layout comes from `monitors`.
-    if !state.connected.get() || state.spanning.get() {
+    // While spanning all monitors the layout comes from `monitors`; a RemoteApp session keeps
+    // the size of the local monitor.
+    if !state.connected.get() || state.spanning.get() || state.program.is_some() {
         return;
     }
     let (width, height) = (state.picture.width(), state.picture.height());
