@@ -296,23 +296,23 @@ fn inspect_certificate(der: &[u8]) -> anyhow::Result<Vec<u8>> {
     use x509_cert::der::Decode as _;
 
     let cert = x509_cert::Certificate::from_der(der)?;
-    let tbs = &cert.tbs_certificate;
+    let tbs = cert.tbs_certificate();
     let fingerprint = Sha256::digest(der)
         .iter()
         .map(|b| format!("{b:02X}"))
         .collect::<Vec<_>>()
         .join(":");
     info!(
-        subject = %tbs.subject,
-        issuer = %tbs.issuer,
-        not_before = %tbs.validity.not_before,
-        not_after = %tbs.validity.not_after,
+        subject = %tbs.subject(),
+        issuer = %tbs.issuer(),
+        not_before = %tbs.validity().not_before,
+        not_after = %tbs.validity().not_after,
         sha256 = %fingerprint,
         "Server certificate (NOT verified; spike accepts any certificate)"
     );
 
     Ok(tbs
-        .subject_public_key_info
+        .subject_public_key_info()
         .subject_public_key
         .as_bytes()
         .context("subject public key BIT STRING is not aligned")?

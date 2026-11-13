@@ -3533,7 +3533,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "tracing-subscriber",
- "x509-cert",
+ "x509-cert 0.3.0",
 ]
 
 [[package]]

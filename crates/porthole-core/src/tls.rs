@@ -190,19 +190,19 @@ fn inspect(host: &str, der: Vec<u8>) -> Result<(CertificateInfo, Vec<u8>), TlsEr
     use x509_cert::der::Decode as _;
 
     let cert = x509_cert::Certificate::from_der(&der).map_err(|e| TlsError::BadCertificate(e.to_string()))?;
-    let tbs = &cert.tbs_certificate;
+    let tbs = cert.tbs_certificate();
     let public_key = tbs
-        .subject_public_key_info
+        .subject_public_key_info()
         .subject_public_key
         .as_bytes()
         .ok_or_else(|| TlsError::BadCertificate("subject public key is not byte aligned".to_owned()))?
         .to_owned();
     let info = CertificateInfo {
         host: host.to_owned(),
-        subject: tbs.subject.to_string(),
-        issuer: tbs.issuer.to_string(),
-        not_before: tbs.validity.not_before.to_string(),
-        not_after: tbs.validity.not_after.to_string(),
+        subject: tbs.subject().to_string(),
+        issuer: tbs.issuer().to_string(),
+        not_before: tbs.validity().not_before.to_string(),
+        not_after: tbs.validity().not_after.to_string(),
         sha256_fingerprint: fingerprint(&der),
         der,
     };
