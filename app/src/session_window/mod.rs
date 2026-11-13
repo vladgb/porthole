@@ -4,6 +4,7 @@ mod clipboard;
 mod input;
 mod keys;
 mod monitors;
+mod remote_app;
 mod remote_files;
 mod resize;
 mod toolbar;
@@ -45,6 +46,8 @@ pub struct Target {
     /// Lossless picture instead of H.264.
     pub best_quality: bool,
     pub shared_folders: Vec<std::path::PathBuf>,
+    /// Show only this program's windows instead of the desktop (RemoteApp).
+    pub program: Option<String>,
     /// Save the password in the keyring once connected (a saved PC's "Remember password").
     pub save_password: bool,
     /// The password came from the keyring.
@@ -85,6 +88,9 @@ struct Inner {
     /// The monitors asked for while spanning, and the scale.
     span_layout: RefCell<Option<(Vec<porthole_core::MonitorRect>, u32)>>,
     shared_folders: Vec<std::path::PathBuf>,
+    /// RemoteApp: the program whose windows are shown instead of the desktop.
+    program: Option<String>,
+    apps: remote_app::Apps,
     save_password: Cell<bool>,
     password_saved: Cell<bool>,
     desktop: Desktop,
@@ -126,7 +132,12 @@ impl SessionWindow {
     ) {
         let desktop = desktop_size(parent.map(|p| p.upcast_ref()));
         let state = build(app, target, desktop, credentials);
-        state.window.maximize();
+        // In RemoteApp mode the session window only shows progress and problems.
+        if state.program.is_none() {
+            state.window.maximize();
+        } else {
+            state.window.set_default_size(720, 480);
+        }
         state.window.present();
         start(&state);
     }
@@ -146,6 +157,7 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         all_monitors,
         best_quality,
         shared_folders,
+        program,
         save_password,
         password_saved,
     } = target;
@@ -241,7 +253,15 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         .build();
     // A black background around the scaled desktop instead of the window colour.
     let css = gtk::CssProvider::new();
-    css.load_from_string(".porthole-display { background: black; }");
+    // RemoteApp windows and popups are see-through where the program's are (rounded corners,
+    // transparent popup hosts).
+    css.load_from_string(
+        ".porthole-display { background: black; }
+         window.porthole-app { background: none; }
+         popover.porthole-popup, popover.porthole-popup > contents {
+           background: none; border: none; border-radius: 0; box-shadow: none; padding: 0; margin: 0;
+         }",
+    );
     gtk::style_context_add_provider_for_display(
         &gtk::prelude::WidgetExt::display(&window),
         &css,
@@ -276,6 +296,8 @@ fn build(app: &adw::Application, target: Target, desktop: Desktop, credentials: 
         extra_views: RefCell::default(),
         span_layout: RefCell::default(),
         shared_folders,
+        program,
+        apps: remote_app::Apps::default(),
         save_password: Cell::new(save_password),
         password_saved: Cell::new(password_saved),
         desktop,
@@ -369,6 +391,7 @@ fn start(state: &State) {
     config.keyboard_layout = input::keyboard_layout();
     config.clipboard = state.clipboard;
     config.graphics_pipeline = !state.best_quality;
+    config.remote_app = state.program.clone().map(porthole_core::RemoteApp::new);
     if state.microphone {
         let microphone: porthole_core::Microphone = Arc::new(|format, sink| {
             porthole_audio::Capture::start(format.sample_rate, format.channels, sink)
@@ -457,11 +480,15 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
                 {
                     warn!(error = %e, "Couldn't record the connection");
                 }
+                input::synchronize_locks(&state);
+                clipboard::share_local(&state);
+                if state.program.is_some() {
+                    remote_app::connected(&state);
+                    continue;
+                }
                 state.title.set_subtitle(&format!("{width} × {height}"));
                 state.stack.set_visible_child_name("display");
                 state.picture.grab_focus();
-                input::synchronize_locks(&state);
-                clipboard::share_local(&state);
                 resize::schedule(&state);
                 monitors::send_layout(&state);
             }
@@ -471,6 +498,7 @@ async fn run_events(state: State, events: async_channel::Receiver<SessionEvent>)
             SessionEvent::FrameReady => schedule_upload(&state),
             SessionEvent::Pointer(pointer) => set_pointer(&state, pointer),
             SessionEvent::Clipboard(remote) => clipboard::set_remote(&state, remote),
+            SessionEvent::RemoteApp(event) => remote_app::handle(&state, event),
             SessionEvent::Disconnected(reason) => {
                 session_ended(&state, reason);
                 return;
@@ -651,7 +679,18 @@ fn session_ended(state: &State, reason: DisconnectReason) {
     state.session.replace(None);
     state.picture.set_cursor(None);
     monitors::leave(state);
-    if state.closing.take().is_some() || reason == DisconnectReason::UserRequested {
+    let app_finished = state.program.is_some() && remote_app::session_ended(state);
+    if let Some(failure) = remote_app::take_failure(state) {
+        state.ended.set_title("Couldn't Start the Program");
+        state.ended.set_description(Some(&glib::markup_escape_text(&failure)));
+        state.details.set_visible(false);
+        state.reconnect.set_label("Try Again");
+        state.title.set_subtitle("Disconnected");
+        state.stack.set_visible_child_name("ended");
+        state.last_reason.replace(Some(reason));
+        return;
+    }
+    if state.closing.take().is_some() || reason == DisconnectReason::UserRequested || app_finished {
         state.window.destroy();
         return;
     }
@@ -686,6 +725,16 @@ fn schedule_upload(state: &State) {
         return;
     }
     let state = state.clone();
+    // Tick callbacks only run while the widget is mapped. In RemoteApp mode the session window
+    // is hidden once the program's windows are up, and those come and go, so a tick on one of
+    // them could be lost with it: upload when idle instead.
+    if !state.picture.is_mapped() {
+        glib::idle_add_local_once(move || {
+            state.upload_scheduled.set(false);
+            upload(&state);
+        });
+        return;
+    }
     state.picture.clone().add_tick_callback(move |_, _| {
         state.upload_scheduled.set(false);
         upload(&state);
@@ -699,7 +748,8 @@ fn upload(state: &State) {
         return;
     };
     let main_area = state.main_area.get();
-    let extras = state.extra_views.borrow().clone();
+    let mut extras = state.extra_views.borrow().clone();
+    extras.extend(remote_app::upload(state, session));
     let previous = state.texture.borrow().clone();
     let textures = session.framebuffer().take_damage(|damage| {
         if damage.width == 0 || damage.height == 0 {
@@ -708,10 +758,18 @@ fn upload(state: &State) {
         // GdkMemoryTexture keeps a reference to its bytes, so every frame needs its own copy;
         // the views share it.
         let bytes = glib::Bytes::from(damage.data);
-        let main = view_texture(&damage, &bytes, main_area, previous.as_ref());
+        let main = view_texture(&damage, &bytes, main_area, previous.as_ref(), false);
         let extra: Vec<_> = extras
             .iter()
-            .map(|view| view_texture(&damage, &bytes, Some(view.area), view.texture.borrow().as_ref()))
+            .map(|view| {
+                view_texture(
+                    &damage,
+                    &bytes,
+                    Some(view.area.get()),
+                    view.texture.borrow().as_ref(),
+                    false,
+                )
+            })
             .collect();
         Some((main, extra))
     });
@@ -738,6 +796,7 @@ fn debug_dump_views(state: &State) {
     let dir = std::path::PathBuf::from(dir);
     let mut textures = vec![state.texture.borrow().clone()];
     textures.extend(state.extra_views.borrow().iter().map(|v| v.texture.borrow().clone()));
+    textures.extend(remote_app::views(state).iter().map(|v| v.texture.borrow().clone()));
     for (i, texture) in textures.into_iter().enumerate() {
         if let Some(texture) = texture {
             let _ = texture.save_to_png(dir.join(format!("view-{i}.png")));
@@ -753,6 +812,7 @@ fn view_texture(
     bytes: &glib::Bytes,
     area: Option<monitors::Area>,
     previous: Option<&gdk::Texture>,
+    alpha: bool,
 ) -> Option<gdk::Texture> {
     let area = area.unwrap_or(monitors::Area {
         x: 0,
@@ -774,7 +834,11 @@ fn view_texture(
         .set_width(width as i32)
         .set_height(height as i32)
         .set_stride(damage.stride)
-        .set_format(gdk::MemoryFormat::B8g8r8x8);
+        .set_format(if alpha {
+            gdk::MemoryFormat::B8g8r8a8
+        } else {
+            gdk::MemoryFormat::B8g8r8x8
+        });
     if !damage.full
         && let Some(previous) = previous
         && previous.width() == width as i32
@@ -812,6 +876,7 @@ fn view_texture(
 fn refresh_views(state: &State) {
     if let Some(session) = state.session.borrow().as_ref() {
         session.framebuffer().mark_full_damage();
+        remote_app::mark_full_damage(state, session);
     }
     schedule_upload(state);
 }
@@ -843,8 +908,9 @@ fn set_pointer(state: &State, pointer: PointerEvent) {
 }
 
 fn set_cursor(state: &State, cursor: Option<&gdk::Cursor>) {
+    remote_app::cursor_changed(state, cursor);
     state.picture.set_cursor(cursor);
-    for view in state.extra_views.borrow().iter() {
+    for view in state.extra_views.borrow().iter().chain(&remote_app::views(state)) {
         view.picture.set_cursor(cursor);
     }
 }

@@ -422,6 +422,16 @@ fn create_client_confirm_active(
         }),
     ]);
 
+    if config.enable_rail {
+        // TS_RAIL_CAPABILITYSET: TS_RAIL_LEVEL_SUPPORTED | TS_RAIL_LEVEL_HANDSHAKE_EX_SUPPORTED.
+        server_capability_sets.push(CapabilitySet::Rail(0x0000_0081u32.to_le_bytes().to_vec()));
+        // TS_WINDOW_CAPABILITYSET: TS_WINDOW_LEVEL_SUPPORTED_EX, 3 icon caches of 12 entries (as FreeRDP).
+        let mut window_list = 2u32.to_le_bytes().to_vec();
+        window_list.push(3);
+        window_list.extend_from_slice(&12u16.to_le_bytes());
+        server_capability_sets.push(CapabilitySet::WindowList(window_list));
+    }
+
     if !server_capability_sets
         .iter()
         .any(|c| matches!(&c, CapabilitySet::MultiFragmentUpdate(_)))

@@ -45,6 +45,11 @@ pub(super) fn attach_extra(state: &State, view: &std::rc::Rc<ExtraView>) {
     attach_pointer(state, &view.picture, View::Extra(std::rc::Rc::downgrade(view)));
 }
 
+/// Pointer input for a RemoteApp popup (a menu or tooltip); keys go through its parent window.
+pub(super) fn attach_popup(state: &State, view: &std::rc::Rc<ExtraView>) {
+    attach_pointer(state, &view.picture, View::Extra(std::rc::Rc::downgrade(view)));
+}
+
 /// Which window's picture a pointer event is for.
 #[derive(Clone)]
 enum View {
@@ -65,7 +70,10 @@ fn key_controller(state: &State) -> gtk::EventControllerKey {
             return glib::Propagation::Proceed;
         }
         let ctrl_alt = gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::ALT_MASK;
-        if modifiers.contains(ctrl_alt) && matches!(keyval, gdk::Key::Return | gdk::Key::KP_Enter) {
+        if modifiers.contains(ctrl_alt)
+            && matches!(keyval, gdk::Key::Return | gdk::Key::KP_Enter)
+            && state.program.is_none()
+        {
             if state.window.is_fullscreen() {
                 state.window.unfullscreen();
             } else {
@@ -92,9 +100,15 @@ fn attach_pointer(state: &State, picture: &gtk::Picture, view: View) {
     let weak = std::rc::Rc::downgrade(state);
     let motion_view = view.clone();
     motion.connect_motion(move |_, x, y| {
-        if let Some(state) = weak.upgrade()
-            && let Some(position) = to_remote(&state, &motion_view, x, y)
+        let Some(state) = weak.upgrade() else { return };
+        // The pointer is ours again: the compositor has finished a move or resize.
+        if let View::Extra(view) = &motion_view
+            && let Some(view) = view.upgrade()
+            && view.moving.get().is_some()
         {
+            super::remote_app::move_size_ended(&state, &view);
+        }
+        if let Some(position) = to_remote(&state, &motion_view, x, y) {
             send(&state, [Operation::MouseMove(position)]);
         }
     });
@@ -103,6 +117,7 @@ fn attach_pointer(state: &State, picture: &gtk::Picture, view: View) {
     // Raw button events: GestureClick tracks one button at a time, but chords (e.g. left+right) must work.
     let buttons = gtk::EventControllerLegacy::new();
     let weak = std::rc::Rc::downgrade(state);
+    let button_view = view.clone();
     buttons.connect_event(move |controller, event| {
         let Some(state) = weak.upgrade() else {
             return glib::Propagation::Proceed;
@@ -117,6 +132,18 @@ fn attach_pointer(state: &State, picture: &gtk::Picture, view: View) {
         };
         if pressed && let Some(widget) = controller.widget() {
             widget.grab_focus();
+        }
+        if let View::Extra(view) = &button_view
+            && let Some(view) = view.upgrade()
+        {
+            if pressed {
+                view.last_press.replace(Some(event.clone()));
+                if let Some(window) = view.remote_window {
+                    super::remote_app::focus(&state, window);
+                }
+            } else if view.moving.get().is_some() {
+                super::remote_app::move_size_ended(&state, &view);
+            }
         }
         let Some(button) = u16::try_from(button).ok().and_then(MouseButton::from_native_button) else {
             debug!(button, "Unmapped mouse button");
@@ -224,6 +251,10 @@ pub(super) fn keyboard_layout() -> u32 {
 }
 
 fn send(state: &State, operations: impl IntoIterator<Item = Operation>) {
+    let mut operations: Vec<_> = operations.into_iter().collect();
+    if super::remote_app::hold(state, &mut operations) {
+        return;
+    }
     if let Some(session) = state.session.borrow().as_ref() {
         session.send_input(operations);
     }
@@ -258,20 +289,23 @@ fn to_remote(state: &State, view: &View, x: f64, y: f64) -> Option<MousePosition
         View::Main => (
             state.picture.clone(),
             state.texture.borrow().clone()?,
-            state.main_area.get().map_or((0, 0), |a| (a.x, a.y)),
+            state.main_area.get().map_or((0, 0), |a| (a.x as i32, a.y as i32)),
         ),
         View::Extra(view) => {
             let view = view.upgrade()?;
             let texture = view.texture.borrow().clone()?;
-            (view.picture.clone(), texture, (view.area.x, view.area.y))
+            let area = view.area.get();
+            let origin = view.origin.get().unwrap_or((area.x as i32, area.y as i32));
+            (view.picture.clone(), texture, origin)
         }
     };
     let (tw, th) = (f64::from(texture.width()), f64::from(texture.height()));
     let (ww, wh) = (f64::from(picture.width()), f64::from(picture.height()));
     let point = map_point(x, y, (ww, wh), (tw, th))?;
+    let shift = |v: u16, by: i32| u16::try_from((i32::from(v) + by).max(0)).unwrap_or(u16::MAX);
     Some(MousePosition {
-        x: point.x.saturating_add(u16::try_from(origin.0).unwrap_or(u16::MAX)),
-        y: point.y.saturating_add(u16::try_from(origin.1).unwrap_or(u16::MAX)),
+        x: shift(point.x, origin.0),
+        y: shift(point.y, origin.1),
     })
 }
 

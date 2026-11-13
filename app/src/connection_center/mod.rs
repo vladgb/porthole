@@ -169,7 +169,7 @@ impl ConnectionCenter {
             error,
             move |_| match porthole_core::parse_address(&entry.text()) {
                 Ok((host, port)) => {
-                    glib::spawn_future_local(quick_connect(window, host, port, None));
+                    glib::spawn_future_local(quick_connect(window, host, port, None, None));
                 }
                 Err(e) => {
                     error.set_label(&e.to_string());
@@ -551,13 +551,19 @@ pub fn launch(app: &adw::Application, launch: crate::Launch) {
     let Some(address) = launch.address else { return };
     match porthole_core::parse_address(&address) {
         Ok((host, port)) => {
-            glib::spawn_future_local(quick_connect(window, host, port, launch.user));
+            glib::spawn_future_local(quick_connect(window, host, port, launch.user, launch.program));
         }
         Err(e) => dialogs::show_error(&window, "Can't Connect", &format!("“{address}”: {e}")),
     }
 }
 
-async fn quick_connect(window: adw::ApplicationWindow, host: String, port: u16, user: Option<String>) {
+async fn quick_connect(
+    window: adw::ApplicationWindow,
+    host: String,
+    port: u16,
+    user: Option<String>,
+    program: Option<String>,
+) {
     let mut target = Target {
         name: Pc::new(host.clone(), port).address(),
         host,
@@ -571,6 +577,7 @@ async fn quick_connect(window: adw::ApplicationWindow, host: String, port: u16, 
         all_monitors: false,
         best_quality: false,
         shared_folders: Vec::new(),
+        program,
         save_password: false,
         password_saved: false,
     };
@@ -595,6 +602,7 @@ async fn connect_saved(window: adw::ApplicationWindow, pc: Pc) {
         all_monitors: pc.all_monitors,
         best_quality: pc.best_quality,
         shared_folders: pc.shared_folders.clone(),
+        program: pc.program.clone(),
         save_password: false,
         password_saved: false,
     };

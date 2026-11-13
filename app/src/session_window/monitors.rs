@@ -2,7 +2,7 @@
 //! and each local monitor shows its part in a full-screen window of its own (the session window
 //! on its monitor, extra windows on the others).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gtk4 as gtk;
@@ -22,12 +22,37 @@ pub(super) struct Area {
     pub height: u32,
 }
 
-/// A full-screen window showing the part of the desktop on another local monitor.
+/// A window showing part of the desktop: a full-screen one for another local monitor, or one of
+/// a RemoteApp program's windows (see `remote_app`).
 pub(super) struct ExtraView {
     pub window: gtk::Window,
     pub picture: gtk::Picture,
-    pub area: Area,
+    pub area: Cell<Area>,
     pub texture: RefCell<Option<gdk::Texture>>,
+    /// The RemoteApp window shown, if any.
+    pub remote_window: Option<u32>,
+    /// Where the picture's top-left is on the remote desktop, when it isn't `area`'s: a
+    /// RemoteApp window with an image of its own, which may hang over the desktop's edge.
+    pub origin: Cell<Option<(i32, i32)>>,
+    /// The last button press in the window, which a local move or resize needs.
+    pub last_press: RefCell<Option<gdk::Event>>,
+    /// The PC handed over a move or resize that the compositor is doing now.
+    pub moving: Cell<Option<porthole_core::MoveSizeKind>>,
+}
+
+impl ExtraView {
+    pub fn new(window: gtk::Window, picture: gtk::Picture, area: Area, remote_window: Option<u32>) -> Self {
+        Self {
+            window,
+            picture,
+            area: Cell::new(area),
+            texture: RefCell::default(),
+            remote_window,
+            origin: Cell::new(None),
+            last_press: RefCell::default(),
+            moving: Cell::new(None),
+        }
+    }
 }
 
 /// One local monitor's place in the remote layout.
@@ -144,12 +169,7 @@ fn extra_window(state: &State, app: Option<&gtk::Application>, monitor: &gdk::Mo
         .decorated(false)
         .build();
     window.set_application(app);
-    let view = Rc::new(ExtraView {
-        window: window.clone(),
-        picture,
-        area,
-        texture: RefCell::default(),
-    });
+    let view = Rc::new(ExtraView::new(window.clone(), picture, area, None));
     super::input::attach_extra(state, &view);
     // Closing any of the windows ends spanning (Alt+F4 on a secondary monitor, say).
     let weak = Rc::downgrade(state);

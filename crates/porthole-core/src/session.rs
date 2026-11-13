@@ -24,7 +24,7 @@ use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{
     ActiveStage, ActiveStageBuilder, ActiveStageOutput, GracefulDisconnectReason, SessionError, SessionErrorExt as _,
 };
-use ironrdp::svc::ChannelFlags;
+use ironrdp::svc::{ChannelFlags, SvcProcessorMessages};
 use ironrdp_egfx::client::GraphicsPipelineClient;
 use ironrdp_tokio::{FramedWrite as _, TokioFramed};
 use tokio::net::TcpStream;
@@ -39,7 +39,9 @@ use crate::config::{MonitorRect, Security, SessionConfig};
 use crate::drive::DriveBackend;
 use crate::event::{AuthFailure, CertificatePrompt, DisconnectReason, PointerEvent, SessionEvent};
 use crate::framebuffer::{Framebuffer, Rect};
-use crate::gfx::GfxOutput;
+use crate::gfx::{GfxOutput, WindowImage, WindowImages};
+use crate::rail::{self, RailChannel, WindowCommand};
+use crate::rail_orders::WindowOrders;
 use crate::tls;
 use crate::{audin, camera};
 use crate::{h264, kerberos};
@@ -65,6 +67,7 @@ enum Command {
         monitors: Vec<MonitorRect>,
         scale: u32,
     },
+    RemoteApp(rail::Request),
     Disconnect,
 }
 
@@ -72,11 +75,18 @@ enum Command {
 pub struct SessionHandle {
     commands: async_channel::Sender<Command>,
     framebuffer: Framebuffer,
+    windows: WindowImages,
 }
 
 impl SessionHandle {
     pub fn framebuffer(&self) -> &Framebuffer {
         &self.framebuffer
+    }
+
+    /// RemoteApp: a window's own image, when the PC sends one (enhanced RemoteApp, which needs
+    /// the Graphics Pipeline). Otherwise the window is part of [`Self::framebuffer`].
+    pub fn window_image(&self, window: u32) -> Option<WindowImage> {
+        crate::gfx::lock(&self.windows).get(&window).cloned()
     }
 
     /// Queues keyboard/mouse operations. Ignored before the session is connected.
@@ -141,6 +151,30 @@ impl SessionHandle {
         self.send(Command::Layout { monitors, scale });
     }
 
+    /// RemoteApp: tells the PC which of the program's windows has the keyboard focus here.
+    pub fn activate_window(&self, window: u32, active: bool) {
+        self.send(Command::RemoteApp(rail::Request::Activate { window, active }));
+    }
+
+    /// RemoteApp: minimize, maximize, restore or close one of the program's windows, as its
+    /// window menu would.
+    pub fn window_command(&self, window: u32, command: WindowCommand) {
+        self.send(Command::RemoteApp(rail::Request::Command { window, command }));
+    }
+
+    /// RemoteApp: moves or resizes one of the program's windows on the remote desktop (pixels).
+    /// Also ends a move or resize the PC handed over with
+    /// [`crate::RemoteAppEvent::MoveSize`]; send the window's rectangle as it is now.
+    pub fn move_window(&self, window: u32, x: i32, y: i32, width: u32, height: u32) {
+        self.send(Command::RemoteApp(rail::Request::Move {
+            window,
+            x,
+            y,
+            width,
+            height,
+        }));
+    }
+
     /// Asks the server to end the session; a `Disconnected` event follows.
     pub fn disconnect(&self) {
         self.send(Command::Disconnect);
@@ -161,8 +195,15 @@ pub fn connect(
     let (command_tx, command_rx) = async_channel::unbounded();
     let (event_tx, event_rx) = async_channel::unbounded();
     let framebuffer = Framebuffer::default();
+    let windows = WindowImages::default();
 
-    let task = runtime.spawn(run(config, event_tx.clone(), command_rx, framebuffer.clone()));
+    let task = runtime.spawn(run(
+        config,
+        event_tx.clone(),
+        command_rx,
+        framebuffer.clone(),
+        windows.clone(),
+    ));
     runtime.spawn(async move {
         let reason = match task.await {
             Ok(reason) => reason,
@@ -180,6 +221,7 @@ pub fn connect(
         SessionHandle {
             commands: command_tx,
             framebuffer,
+            windows,
         },
         event_rx,
     )
@@ -189,11 +231,17 @@ type Events = async_channel::Sender<SessionEvent>;
 type Commands = async_channel::Receiver<Command>;
 type Framed = TokioFramed<TlsStream<TcpStream>>;
 
-async fn run(config: SessionConfig, events: Events, commands: Commands, framebuffer: Framebuffer) -> DisconnectReason {
+async fn run(
+    config: SessionConfig,
+    events: Events,
+    commands: Commands,
+    framebuffer: Framebuffer,
+    windows: WindowImages,
+) -> DisconnectReason {
     info!(host = %config.host, port = config.port, security = ?config.security, "Connecting");
     let started = Instant::now();
     let established = tokio::select! {
-        result = establish(&config, &events, &framebuffer) => result,
+        result = establish(&config, &events, &framebuffer, &windows) => result,
         () = wait_for_disconnect(&commands) => return DisconnectReason::UserRequested,
     };
     let (result, framed, channels) = match established {
@@ -232,12 +280,15 @@ struct Channels {
     microphone: Option<audin::Packets>,
     /// Camera frames to send.
     camera: Option<camera::Samples>,
+    /// RemoteApp: the windows the server describes.
+    window_orders: Option<WindowOrders>,
 }
 
 async fn establish(
     config: &SessionConfig,
     events: &Events,
     framebuffer: &Framebuffer,
+    windows: &WindowImages,
 ) -> Result<(ConnectionResult, Framed, Channels), DisconnectReason> {
     let limit = config.connect_timeout;
     let nla = config.security == Security::Nla;
@@ -248,9 +299,21 @@ async fn establish(
         .map_err(|e| DisconnectReason::Unreachable(describe_io(&e)))?;
     let mut framed = TokioFramed::new(tcp);
     let h264 = config.graphics_pipeline.then(h264::decoder).flatten();
+    // RemoteApp windows come as surfaces of their own only through the Graphics Pipeline, so a
+    // RemoteApp session uses it even without H.264 (with Windows' lossless codecs then).
+    let gfx = h264.is_some() || config.remote_app.is_some();
     let mut connector_config = connector_config(config);
-    connector_config.enable_gfx = h264.is_some();
+    connector_config.enable_gfx = gfx;
+    connector_config.enable_rail = config.remote_app.is_some();
     let mut connector = ClientConnector::new(connector_config, client_addr);
+    if let Some(app) = &config.remote_app {
+        connector.attach_static_channel(RailChannel::new(
+            app.clone(),
+            config.desktop_width,
+            config.desktop_height,
+            events.clone(),
+        ));
+    }
     let clipboard_signals = config.clipboard.then(|| {
         let (backend, signals) = clipboard::Backend::new();
         connector.attach_static_channel(CliprdrClient::new(Box::new(backend)));
@@ -281,12 +344,12 @@ async fn establish(
         let _ = display_ready_tx.send(());
         Ok(Vec::new())
     }));
-    // The Graphics Pipeline only with H.264: Windows then sends almost everything as H.264.
-    // Without it the server would lean on codecs IronRDP doesn't decode reliably yet, so the
-    // session stays on legacy bitmap updates.
-    if let Some(h264) = h264 {
-        let output = GfxOutput::new(framebuffer.clone(), events.clone());
-        drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(output), Some(h264)));
+    // The Graphics Pipeline only with H.264 (or for RemoteApp, see `gfx`): Windows then sends
+    // almost everything as H.264. Without it the server would lean on codecs IronRDP doesn't
+    // decode reliably yet, so a desktop session stays on legacy bitmap updates.
+    if gfx {
+        let output = GfxOutput::new(framebuffer.clone(), windows.clone(), events.clone(), h264.is_some());
+        drdynvc = drdynvc.with_dynamic_channel(GraphicsPipelineClient::new(Box::new(output), h264));
     }
     let microphone = config.microphone.clone().map(|microphone| {
         let (input, packets) = audin::AudioInput::new(microphone);
@@ -323,6 +386,7 @@ async fn establish(
         display_ready,
         microphone,
         camera,
+        window_orders: config.remote_app.is_some().then(WindowOrders::default),
     };
 
     let should_upgrade = within(
@@ -457,6 +521,7 @@ fn connector_config(config: &SessionConfig) -> connector::Config {
         enable_audio_playback: config.audio.is_some(),
         enable_gfx: false,
         enable_audio_capture: config.microphone.is_some(),
+        enable_rail: false,
         compression_type: None,
         multitransport_flags: None,
         performance_flags: PerformanceFlags::default() | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION,
@@ -615,6 +680,13 @@ fn strip_locations(text: &str) -> String {
     out
 }
 
+/// Server notices IronRDP fails to decode but the session doesn't need: a Logon Errors Info
+/// whose type is an NTSTATUS or a plain failure code (Windows sends one when another session
+/// has to be disconnected first), which IronRDP only accepts as a `LOGON_MSG_*` value.
+fn is_harmless(e: &SessionError) -> bool {
+    error_chain(e).contains("LogonErrorsInfo")
+}
+
 fn lost(e: io::Error) -> DisconnectReason {
     DisconnectReason::ConnectionLost(describe_io(&e))
 }
@@ -660,6 +732,7 @@ async fn active_session(
         mut display_ready,
         mut microphone,
         mut camera,
+        mut window_orders,
     } = channels;
     let mut display = DisplayControl::default();
     let mut clipboard_timer = tokio::time::interval(Duration::from_secs(5));
@@ -670,7 +743,21 @@ async fn active_session(
             frame = reader.read_pdu() => match frame {
                 Ok((action, payload)) => {
                     trace!(?action, len = payload.len(), "PDU");
-                    stage.process(&mut image, action, &payload).map_err(protocol_error)?
+                    if action == ironrdp::pdu::Action::FastPath
+                        && let Some(orders) = window_orders.as_mut()
+                    {
+                        for event in orders.fast_path_frame(&payload) {
+                            let _ = events.send(SessionEvent::RemoteApp(event)).await;
+                        }
+                    }
+                    match stage.process(&mut image, action, &payload) {
+                        Ok(outputs) => outputs,
+                        Err(e) if is_harmless(&e) => {
+                            debug!(error = %error_chain(&e), "Ignoring a notice IronRDP can't read");
+                            Vec::new()
+                        }
+                        Err(e) => return Err(protocol_error(e)),
+                    }
                 }
                 // The server closes the connection in response to our shutdown request.
                 Err(_) if shutdown_deadline.is_some() => return Ok(DisconnectReason::UserRequested),
@@ -693,6 +780,17 @@ async fn active_session(
                 Ok(Command::Layout { monitors, scale }) => {
                     display.request(Layout::new(monitors, scale), framebuffer.size());
                     display.send(&mut stage)?
+                }
+                Ok(Command::RemoteApp(request)) => {
+                    let Some(channel) = stage.get_svc_processor_mut::<RailChannel>() else { continue };
+                    let messages = channel.request(request);
+                    if messages.is_empty() {
+                        continue;
+                    }
+                    let frame = stage
+                        .process_svc_processor_messages(SvcProcessorMessages::<RailChannel>::new(messages))
+                        .map_err(protocol_error)?;
+                    vec![ActiveStageOutput::ResponseFrame(frame)]
                 }
                 Ok(Command::FetchClipboardFiles { dir, reply }) => {
                     let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else {

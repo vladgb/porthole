@@ -809,6 +809,18 @@ fn create_gcc_blocks<'a>(
 
     let channels = static_channels
         .map(ironrdp_svc::make_channel_definition)
+        .map(|mut def| {
+            // rdesk patch: Windows only talks RemoteApp over a `rail` channel announced with
+            // these options (the set mstsc and FreeRDP use).
+            if config.enable_rail && def.name.as_str() == Some("rail") {
+                use ironrdp_pdu::gcc::ChannelOptions;
+                def.options |= ChannelOptions::INITIALIZED
+                    | ChannelOptions::ENCRYPT_RDP
+                    | ChannelOptions::COMPRESS_RDP
+                    | ChannelOptions::SHOW_PROTOCOL;
+            }
+            def
+        })
         .collect::<Vec<_>>();
 
     Ok(ClientGccBlocks {
@@ -911,8 +923,17 @@ fn create_client_info_pdu(config: &Config, client_addr: &SocketAddr) -> rdp::Cli
         | ClientInfoFlags::LOGON_NOTIFY
         | ClientInfoFlags::LOGON_ERRORS
         | ClientInfoFlags::VIDEO_DISABLE
-        | ClientInfoFlags::ENABLE_WINDOWS_KEY
-        | ClientInfoFlags::MAXIMIZE_SHELL;
+        | ClientInfoFlags::ENABLE_WINDOWS_KEY;
+
+    if config.enable_rail {
+        flags |= ClientInfoFlags::RAIL;
+        // Enhanced RemoteApp: each window comes as a Graphics Pipeline surface of its own.
+        if config.enable_gfx {
+            flags |= ClientInfoFlags::HIDEF_RAIL_SUPPORTED;
+        }
+    } else {
+        flags |= ClientInfoFlags::MAXIMIZE_SHELL;
+    }
 
     if config.autologon {
         flags |= ClientInfoFlags::AUTOLOGON;

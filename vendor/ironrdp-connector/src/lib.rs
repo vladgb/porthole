@@ -231,6 +231,10 @@ pub struct Config {
     pub enable_gfx: bool,
     /// rdesk patch: set INFO_AUDIOCAPTURE so the server offers microphone redirection (AUDIN).
     pub enable_audio_capture: bool,
+    /// rdesk patch: request a RemoteApp (RAIL) session: sets INFO_RAIL instead of
+    /// INFO_MAXIMIZESHELL and advertises the Remote Programs and Window List capability sets.
+    /// The caller must attach a `rail` static channel.
+    pub enable_rail: bool,
     pub performance_flags: PerformanceFlags,
 
     pub license_cache: Option<Arc<dyn LicenseCache>>,

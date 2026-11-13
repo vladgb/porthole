@@ -44,6 +44,9 @@ pub struct SessionConfig {
     /// Sign in with Kerberos when possible (a domain account on a PC addressed by name), falling
     /// back to NTLM. Off: always NTLM.
     pub kerberos: bool,
+    /// Show only this program's windows instead of the desktop (RemoteApp). The desktop size is
+    /// then the area the windows can use.
+    pub remote_app: Option<crate::RemoteApp>,
 }
 
 impl SessionConfig {
@@ -66,6 +69,7 @@ impl SessionConfig {
             microphone: None,
             camera: None,
             kerberos: true,
+            remote_app: None,
         }
     }
 }
@@ -84,6 +88,7 @@ impl fmt::Debug for SessionConfig {
             .field("shared_folders", &self.shared_folders)
             .field("microphone", &self.microphone.is_some())
             .field("camera", &self.camera.is_some())
+            .field("remote_app", &self.remote_app)
             .finish_non_exhaustive()
     }
 }

@@ -114,7 +114,7 @@ fn main() -> glib::ExitCode {
                 glib::ExitCode::SUCCESS
             }
             Err(message) => {
-                eprint!("{message}\nUsage: porthole [HOST[:PORT]] [-u|--user USER]\n");
+                eprint!("{message}\nUsage: porthole [HOST[:PORT]] [-u|--user USER] [--app PROGRAM]\n");
                 glib::ExitCode::FAILURE
             }
         }
@@ -127,6 +127,8 @@ fn main() -> glib::ExitCode {
 pub struct Launch {
     pub address: Option<String>,
     pub user: Option<String>,
+    /// Show only this program's windows (RemoteApp).
+    pub program: Option<String>,
 }
 
 fn parse_args(args: &[String]) -> Result<Launch, String> {
@@ -135,6 +137,7 @@ fn parse_args(args: &[String]) -> Result<Launch, String> {
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-u" | "--user" => launch.user = Some(args.next().ok_or("--user needs a value")?.clone()),
+            "--app" => launch.program = Some(args.next().ok_or("--app needs a program")?.clone()),
             other if other.starts_with('-') => return Err(format!("Unknown option {other}")),
             address if launch.address.is_none() => launch.address = Some(address.to_owned()),
             extra => return Err(format!("Unexpected argument {extra}")),
@@ -158,9 +161,15 @@ mod tests {
             parse_args(&args(&["pc:3390", "-u", r"D\a"])),
             Ok(Launch {
                 address: Some("pc:3390".into()),
-                user: Some(r"D\a".into())
+                user: Some(r"D\a".into()),
+                program: None,
             })
         );
+        assert_eq!(
+            parse_args(&args(&["pc", "--app", "notepad.exe"])).map(|l| l.program),
+            Ok(Some("notepad.exe".into()))
+        );
+        assert!(parse_args(&args(&["pc", "--app"])).is_err());
         assert!(parse_args(&args(&["--bogus"])).is_err());
         assert!(parse_args(&args(&["a", "b"])).is_err());
         assert!(parse_args(&args(&["-u"])).is_err());

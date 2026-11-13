@@ -240,6 +240,11 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
         .model(&gtk::StringList::new(&["Balanced", "Best"]))
         .selected(u32::from(pc.is_some_and(|pc| pc.best_quality)))
         .build();
+    // RemoteApp: an empty entry means the whole desktop.
+    let program_row = adw::EntryRow::builder()
+        .title("Only This Program (e.g. notepad.exe)")
+        .text(pc.and_then(|pc| pc.program.as_deref()).unwrap_or_default())
+        .build();
     let microphone_row = adw::SwitchRow::builder()
         .title("Use Microphone")
         .subtitle("Let the PC record from this computer's microphone")
@@ -281,6 +286,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     list.append(&camera_row);
     list.append(&monitors_row);
     list.append(&quality_row);
+    list.append(&program_row);
     let folders = SharedFolders::new(pc.map_or(&[][..], |pc| &pc.shared_folders));
     list.append(&folders.row);
     list.append(&nla_row);
@@ -345,6 +351,7 @@ pub async fn edit_pc(parent: &impl IsA<gtk::Widget>, pc: Option<&Pc>, groups: &[
     saved.all_monitors = monitors_row.is_active();
     saved.best_quality = quality_row.selected() == 1;
     saved.shared_folders = folders.paths.borrow().clone();
+    saved.program = Some(program_row.text().trim().to_owned()).filter(|p| !p.is_empty());
     saved.group = Some(group_row.text().trim().to_owned()).filter(|g| !g.is_empty());
     saved.username = Some(user_row.text().trim().to_owned()).filter(|u| !u.is_empty());
     Some(saved)
