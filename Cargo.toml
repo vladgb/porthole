@@ -61,7 +61,7 @@ tokio-rustls = "0.26"
 rustls-native-certs = "0.8"
 x509-cert = { version = "0.3", features = ["std"] }
 sha2 = "0.11"
-ironrdp-egfx = "0.3"
+ironrdp-egfx = "0.5"
 openh264 = { version = "0.9", default-features = false, features = ["libloading"] }
 ironrdp-rdpsnd = "0.9"
 ironrdp-cliprdr-format = "0.2"
